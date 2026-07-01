@@ -47,7 +47,11 @@
 			v-if="baseStore.loading"
 			class="vikunja-loading"
 		>
-			<Logo class="logo" />
+			<img
+				:src="tasksBrand"
+				class="logo"
+				alt="Tasks"
+			>
 			<p>
 				<span class="loader-container is-loading-small is-loading" />
 				{{ $t('ready.loading') }}
@@ -57,7 +61,7 @@
 </template>
 
 <script lang="ts" setup>
-import Logo from '@/assets/logo.svg?component'
+import tasksBrand from '@/assets/tasks-brand.png'
 import ApiConfig from '@/components/misc/ApiConfig.vue'
 import Message from '@/components/misc/Message.vue'
 import CustomTransition from '@/components/misc/CustomTransition.vue'

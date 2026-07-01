@@ -5,7 +5,7 @@ import {storeToRefs} from 'pinia'
 import {useTimeTrackingStore} from '@/stores/timeTracking'
 import {getFullBaseUrl} from '@/helpers/getFullBaseUrl'
 
-const TRACKING_FAVICON = `${getFullBaseUrl()}images/icons/favicon-tracking-32x32.png`
+const TRACKING_FAVICON = `${getFullBaseUrl()}images/icons/tasks-favicon-tracking-32x32.png`
 
 function getFaviconLink(): HTMLLinkElement | null {
 	return document.querySelector<HTMLLinkElement>('link[rel="icon"]')
@@ -17,7 +17,7 @@ function getFaviconLink(): HTMLLinkElement | null {
 export const useTimeTrackingFavicon = createSharedComposable(() => {
 	const {hasActiveTimer} = storeToRefs(useTimeTrackingStore())
 
-	const originalHref = getFaviconLink()?.getAttribute('href') ?? '/favicon.ico'
+	const originalHref = getFaviconLink()?.getAttribute('href') ?? '/tasks-favicon.ico'
 
 	function update(active: boolean) {
 		const link = getFaviconLink()

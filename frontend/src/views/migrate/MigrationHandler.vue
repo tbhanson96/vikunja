@@ -56,7 +56,11 @@
 							:key="i"
 						/>
 					</div>
-					<Logo class="logo" />
+					<img
+						:src="tasksBrand"
+						class="logo"
+						alt="Tasks"
+					>
 				</div>
 				<p>{{ $t('migrate.inProgress') }}</p>
 			</div>
@@ -124,7 +128,7 @@ export default {
 import {computed, ref, shallowReactive} from 'vue'
 import {useI18n} from 'vue-i18n'
 
-import Logo from '@/assets/logo.svg?component'
+import tasksBrand from '@/assets/tasks-brand.png'
 import Message from '@/components/misc/Message.vue'
 
 import AbstractMigrationService, {type MigrationConfig} from '@/services/migrator/abstractMigration'
