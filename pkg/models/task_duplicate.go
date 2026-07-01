@@ -81,6 +81,7 @@ func (td *TaskDuplicate) Create(s *xorm.Session, doer web.Auth) (err error) {
 		ProjectID:   originalTask.ProjectID,
 		RepeatAfter: originalTask.RepeatAfter,
 		RepeatMode:  originalTask.RepeatMode,
+		RepeatAsNew: originalTask.RepeatAsNew,
 		Priority:    originalTask.Priority,
 		StartDate:   originalTask.StartDate,
 		EndDate:     originalTask.EndDate,

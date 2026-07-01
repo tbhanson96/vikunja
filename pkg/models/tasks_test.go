@@ -393,6 +393,102 @@ func TestTask_Update(t *testing.T) {
 		assert.False(t, updatedTask.Done)
 		assert.False(t, updatedTask.DoneAt.IsZero(), "done_at should be persisted in database for repeating tasks")
 	})
+	t.Run("repeating tasks can stay done and spawn a new occurrence", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		_, err := s.Where("id = ?", 1).Cols("repeat_after", "repeat_as_new", "due_date").
+			Update(&Task{
+				RepeatAfter: 3600,
+				RepeatAsNew: true,
+				DueDate:     time.Unix(1550000000, 0),
+			})
+		require.NoError(t, err)
+
+		_, err = s.Insert(&TaskAssginee{
+			TaskID: 1,
+			UserID: 1,
+		})
+		require.NoError(t, err)
+
+		_, err = s.Insert(&TaskReminder{
+			TaskID:   1,
+			Reminder: time.Unix(1550003600, 0),
+		})
+		require.NoError(t, err)
+
+		task := &Task{ID: 1}
+		err = task.ReadOne(s, u)
+		require.NoError(t, err)
+		task.Done = true
+		task.RepeatAfter = 3600
+		task.RepeatAsNew = true
+		err = task.Update(s, u)
+		require.NoError(t, err)
+		err = s.Commit()
+		require.NoError(t, err)
+
+		require.True(t, task.Done)
+		require.False(t, task.DoneAt.IsZero())
+
+		tasks := []*Task{}
+		err = s.Where("project_id = ? AND title = ?", 1, "task #1").Asc("id").Find(&tasks)
+		require.NoError(t, err)
+		require.Len(t, tasks, 2)
+
+		var oldTask, newTask *Task
+		for _, candidate := range tasks {
+			switch {
+			case candidate.ID == 1:
+				oldTask = candidate
+			case candidate.ID != 1:
+				newTask = candidate
+			}
+		}
+		require.NotNil(t, oldTask)
+		require.NotNil(t, newTask)
+
+		assert.True(t, oldTask.Done)
+		assert.False(t, newTask.Done)
+		assert.True(t, newTask.DueDate.After(oldTask.DueDate))
+		assert.Equal(t, 0.0, newTask.PercentDone)
+		assert.True(t, newTask.RepeatAsNew)
+
+		db.AssertExists(t, "task_buckets", map[string]interface{}{
+			"task_id":         1,
+			"project_view_id": 4,
+			"bucket_id":       3,
+		}, false)
+		db.AssertExists(t, "task_buckets", map[string]interface{}{
+			"task_id":         newTask.ID,
+			"project_view_id": 4,
+			"bucket_id":       1,
+		}, false)
+		db.AssertExists(t, "label_tasks", map[string]interface{}{
+			"task_id":  newTask.ID,
+			"label_id": 4,
+		}, false)
+		db.AssertExists(t, "task_assignees", map[string]interface{}{
+			"task_id": newTask.ID,
+			"user_id": 1,
+		}, false)
+
+		reminders := []*TaskReminder{}
+		err = s.Where("task_id = ?", newTask.ID).Find(&reminders)
+		require.NoError(t, err)
+		require.Len(t, reminders, 1)
+
+		comments := []*TaskComment{}
+		err = s.Where("task_id = ?", newTask.ID).Find(&comments)
+		require.NoError(t, err)
+		assert.Len(t, comments, 0)
+
+		attachments := []*TaskAttachment{}
+		err = s.Where("task_id = ?", newTask.ID).Find(&attachments)
+		require.NoError(t, err)
+		assert.Len(t, attachments, 0)
+	})
 	t.Run("repeating tasks marked done from a non-default bucket are moved to the default bucket", func(t *testing.T) {
 		db.LoadAndAssertFixtures(t)
 		s := db.NewSession()
@@ -438,6 +534,53 @@ func TestTask_Update(t *testing.T) {
 			"project_view_id": 4,
 			"bucket_id":       3,
 		})
+	})
+	t.Run("repeating tasks marked done with repeat_as_new stay in the done bucket", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		_, err := s.Where("id = ?", 28).Cols("repeat_as_new").
+			Update(&Task{RepeatAsNew: true})
+		require.NoError(t, err)
+
+		task := &Task{ID: 28}
+		err = task.ReadOne(s, u)
+		require.NoError(t, err)
+		task.Done = true
+		task.RepeatAfter = 3600
+		task.RepeatAsNew = true
+		err = task.Update(s, u)
+		require.NoError(t, err)
+		err = s.Commit()
+		require.NoError(t, err)
+
+		assert.True(t, task.Done)
+
+		db.AssertExists(t, "task_buckets", map[string]interface{}{
+			"task_id":         28,
+			"project_view_id": 4,
+			"bucket_id":       3,
+		}, false)
+
+		tasks := []*Task{}
+		err = s.Where("project_id = ? AND title = ?", 1, "task #28 with repeat after, start_date, end_date and due_date").Asc("id").Find(&tasks)
+		require.NoError(t, err)
+		require.Len(t, tasks, 2)
+
+		var newTask *Task
+		for _, candidate := range tasks {
+			if candidate.ID != 28 {
+				newTask = candidate
+			}
+		}
+		require.NotNil(t, newTask)
+		assert.False(t, newTask.Done)
+		db.AssertExists(t, "task_buckets", map[string]interface{}{
+			"task_id":         newTask.ID,
+			"project_view_id": 4,
+			"bucket_id":       1,
+		}, false)
 	})
 	t.Run("moving a task between projects should give it a correct index", func(t *testing.T) {
 		db.LoadAndAssertFixtures(t)

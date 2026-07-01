@@ -126,6 +126,7 @@ func updateTaskBucket(s *xorm.Session, a web.Auth, b *TaskBucket) (err error) {
 	}
 
 	var updateBucket = true
+	var spawnNextOccurrence bool
 
 	// mark task done if moved into or out of the done bucket
 	// Only change the done state if the task's done value actually changes
@@ -138,17 +139,21 @@ func updateTaskBucket(s *xorm.Session, a web.Auth, b *TaskBucket) (err error) {
 				oldTask := *task
 				oldTask.Done = false
 				updateDone(&oldTask, task)
-				// A repeating task doesn't stay in the done bucket; route
-				// it back to the view's default bucket so the user sees
-				// the next iteration waiting in the "To-Do" column.
-				b.BucketID, err = getDefaultBucketID(s, view)
-				if err != nil {
-					return err
-				}
-				// The task is already in the default bucket, so there is
-				// nothing to move and no count to bump.
-				if b.BucketID == oldTaskBucket.BucketID {
-					updateBucket = false
+				if task.RepeatAsNew {
+					spawnNextOccurrence = true
+				} else {
+					// A repeating task doesn't stay in the done bucket; route
+					// it back to the view's default bucket so the user sees
+					// the next iteration waiting in the "To-Do" column.
+					b.BucketID, err = getDefaultBucketID(s, view)
+					if err != nil {
+						return err
+					}
+					// The task is already in the default bucket, so there is
+					// nothing to move and no count to bump.
+					if b.BucketID == oldTaskBucket.BucketID {
+						updateBucket = false
+					}
 				}
 			}
 		}
@@ -181,6 +186,33 @@ func updateTaskBucket(s *xorm.Session, a web.Auth, b *TaskBucket) (err error) {
 		err = task.updateReminders(s, task)
 		if err != nil {
 			return
+		}
+
+		if spawnNextOccurrence {
+			_, err = createNextRecurringTask(s, task, &Task{
+				ID:          task.ID,
+				Title:       task.Title,
+				Description: task.Description,
+				DueDate:     task.DueDate,
+				ProjectID:   task.ProjectID,
+				RepeatAfter: task.RepeatAfter,
+				RepeatMode:  task.RepeatMode,
+				RepeatAsNew: task.RepeatAsNew,
+				Priority:    task.Priority,
+				StartDate:   task.StartDate,
+				EndDate:     task.EndDate,
+				HexColor:    task.HexColor,
+				Reminders:   cloneTaskReminders(task.Reminders),
+				PercentDone: task.PercentDone,
+				Assignees:   task.Assignees,
+				CreatedByID: task.CreatedByID,
+				BucketID:    oldTaskBucket.BucketID,
+				Done:        false,
+				DoneAt:      time.Time{},
+			}, a)
+			if err != nil {
+				return err
+			}
 		}
 
 		// Since the done state of the task was changed, we need to move the task into all done buckets everywhere

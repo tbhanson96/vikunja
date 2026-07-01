@@ -1157,6 +1157,8 @@
       "mode": "Repeat mode",
       "monthly": "Monthly",
       "fromCurrentDate": "From completion date",
+      "asNew": "Create a new task when completed",
+      "asNewHint": "Keep the current occurrence done and create the next one as a new open task.",
       "each": "Each",
       "specifyAmount": "Specify an amount…",
       "hours": "Hours",
