@@ -83,8 +83,10 @@ useTitle(() => title.value)
 
 <style lang="scss" scoped>
 .no-auth-wrapper {
-	background: var(--site-background) url("@/assets/llama.svg?url") no-repeat
-		fixed bottom left;
+	background:
+		var(--site-background)
+		url("@/assets/tasks-brand.png")
+		no-repeat fixed bottom left / 20rem auto;
 	min-block-size: 100vh;
 	display: flex;
 	flex-direction: column;
@@ -121,7 +123,7 @@ useTitle(() => title.value)
 	}
 
 	@media screen and (min-width: $tablet) {
-		background: url("@/assets/no-auth-image.jpg") no-repeat bottom/cover;
+		background: url("@/assets/tasks-brand.png") no-repeat center/cover;
 		position: relative;
 
 		&.has-message {

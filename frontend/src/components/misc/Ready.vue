@@ -107,7 +107,7 @@ const baseStore = useBaseStore()
 }
 
 .offline {
-	background: url('@/assets/llama-nightscape.jpg') no-repeat center;
+	background: url('@/assets/tasks-brand.png') no-repeat center;
 	background-size: cover;
 	block-size: 100vh;
 }
