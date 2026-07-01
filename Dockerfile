@@ -34,7 +34,6 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG RELEASE_VERSION=dev
 
-ENV CGO_ENABLED=0
 ENV GOOS=${TARGETOS}
 ENV GOARCH=${TARGETARCH}
 ENV RELEASE_VERSION=${RELEASE_VERSION}
@@ -42,7 +41,7 @@ ENV PATH=/root/go/bin:${PATH}
 
 RUN mage build
 
-FROM scratch
+FROM docker.io/library/alpine:3.22
 
 LABEL org.opencontainers.image.authors="maintainers@vikunja.io"
 LABEL org.opencontainers.image.url="https://vikunja.io"
@@ -55,7 +54,7 @@ WORKDIR /app/vikunja
 ENTRYPOINT ["/app/vikunja/vikunja"]
 EXPOSE 3456
 
-COPY --from=apibuilder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+RUN apk add --no-cache ca-certificates
 COPY --from=apibuilder /src/vikunja /app/vikunja/vikunja
 
 USER 1000
