@@ -1,0 +1,52 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      sync_test_mode:
+        description: Run without pushing changes
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-sync-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync main from upstream
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Validate sync token
+        if: ${{ !(inputs.sync_test_mode || false) }}
+        run: |
+          if [ -z "${{ secrets.UPSTREAM_SYNC_TOKEN }}" ]; then
+            echo "::error::Missing secret UPSTREAM_SYNC_TOKEN. Add a classic PAT with repo and workflow scopes to this repository before running the scheduled sync."
+            exit 1
+          fi
+
+      - name: Sync upstream changes
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.3
+        with:
+          target_sync_branch: main
+          target_repo_token: ${{ (inputs.sync_test_mode || false) && secrets.GITHUB_TOKEN || secrets.UPSTREAM_SYNC_TOKEN }}
+          upstream_sync_repo: go-vikunja/vikunja
+          upstream_sync_branch: main
+          test_mode: ${{ inputs.sync_test_mode || false }}
+
+      - name: Report sync result
+        run: |
+          echo "New commits synced: ${{ steps.sync.outputs.has_new_commits }}"
