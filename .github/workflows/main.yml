@@ -1,0 +1,27 @@
+name: Docker Build Main
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "*.md"
+      - ".github/FUNDING.yml"
+      - ".github/workflows/auto-label.prompt.md"
+  workflow_dispatch:
+
+concurrency:
+  group: main-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build Latest
+    uses: ./.github/workflows/publish.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      tag: latest
+      tags: |
+        ghcr.io/${{ github.repository }}:${{ github.sha }}
