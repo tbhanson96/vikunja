@@ -13,5 +13,6 @@ jobs:
       packages: write
     with:
       tag: ${{ github.event.release.tag_name }}
+      ref: ${{ github.sha }}
       tags: |
         ghcr.io/${{ github.repository }}:latest

@@ -23,5 +23,6 @@ jobs:
       packages: write
     with:
       tag: latest
+      ref: ${{ github.sha }}
       tags: |
         ghcr.io/${{ github.repository }}:${{ github.sha }}
