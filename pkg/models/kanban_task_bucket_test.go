@@ -225,6 +225,52 @@ func TestTaskBucket_Update(t *testing.T) {
 			"bucket_id": 3,
 		})
 	})
+	t.Run("moving a repeat_as_new task to the done bucket keeps it there and creates a fresh task", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		_, err := s.Where("id = ?", 28).Cols("repeat_as_new").
+			Update(&Task{RepeatAsNew: true})
+		require.NoError(t, err)
+
+		tb := &TaskBucket{
+			TaskID:        28,
+			BucketID:      3,
+			ProjectViewID: 4,
+			ProjectID:     1,
+		}
+		err = tb.Update(s, u)
+		require.NoError(t, err)
+		err = s.Commit()
+		require.NoError(t, err)
+
+		require.True(t, tb.Task.Done)
+		assert.Equal(t, int64(3), tb.BucketID)
+
+		db.AssertExists(t, "task_buckets", map[string]interface{}{
+			"task_id":   28,
+			"bucket_id": 3,
+		}, false)
+
+		tasks := []*Task{}
+		err = s.Where("project_id = ? AND title = ?", 1, "task #28 with repeat after, start_date, end_date and due_date").Asc("id").Find(&tasks)
+		require.NoError(t, err)
+		require.Len(t, tasks, 2)
+
+		var newTask *Task
+		for _, candidate := range tasks {
+			if candidate.ID != 28 {
+				newTask = candidate
+			}
+		}
+		require.NotNil(t, newTask)
+		assert.False(t, newTask.Done)
+		db.AssertExists(t, "task_buckets", map[string]interface{}{
+			"task_id":   newTask.ID,
+			"bucket_id": 1,
+		}, false)
+	})
 
 	t.Run("done task already in another view's done bucket", func(t *testing.T) {
 		// Regression test: marking a task done syncs it into the done bucket

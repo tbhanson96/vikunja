@@ -1031,7 +1031,7 @@ function setActiveFields() {
 	activeFields.priority = task.value.priority !== PRIORITIES.UNSET
 	activeFields.relatedTasks = Object.keys(task.value.relatedTasks).length > 0
 	activeFields.reminders = task.value.reminders.length > 0
-	activeFields.repeatAfter = task.value.repeatAfter?.amount > 0 || task.value.repeatMode !== TASK_REPEAT_MODES.REPEAT_MODE_DEFAULT
+	activeFields.repeatAfter = task.value.repeatAfter?.amount > 0 || task.value.repeatMode !== TASK_REPEAT_MODES.REPEAT_MODE_DEFAULT || task.value.repeatAsNew
 	activeFields.startDate = task.value.startDate !== null
 }
 
@@ -1199,6 +1199,7 @@ async function setPercentDone(percentDone: number) {
 async function removeRepeatAfter() {
 	task.value.repeatAfter.amount = 0
 	task.value.repeatMode = TASK_REPEAT_MODES.REPEAT_MODE_DEFAULT
+	task.value.repeatAsNew = false
 	await saveTask()
 }
 

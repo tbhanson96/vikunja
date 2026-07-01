@@ -90,6 +90,20 @@
 				</div>
 			</div>
 		</div>
+		<div class="field mbs-3">
+			<label class="checkbox">
+				<input
+					v-model="task.repeatAsNew"
+					:disabled="disabled || undefined"
+					type="checkbox"
+					@change="updateData"
+				>
+				{{ $t('task.repeat.asNew') }}
+			</label>
+			<p class="help">
+				{{ $t('task.repeat.asNewHint') }}
+			</p>
+		</div>
 	</div>
 </template>
 
