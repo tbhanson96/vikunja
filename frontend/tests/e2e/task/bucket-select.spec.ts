@@ -5,6 +5,7 @@ import {TaskFactory} from '../../factories/task'
 import {ProjectViewFactory} from '../../factories/project_view'
 import {TaskBucketFactory} from '../../factories/task_buckets'
 import {TaskRelationFactory} from '../../factories/task_relation'
+import type {Page} from '@playwright/test'
 
 async function createKanbanTaskInBucket() {
 	const projects = await ProjectFactory.create(1)
@@ -33,6 +34,11 @@ async function createKanbanTaskInBucket() {
 	}
 }
 
+async function openPreviewEditor(page: Page) {
+	await page.locator('.task-preview .button').filter({hasText: 'Edit'}).click()
+	await expect(page.locator('.task-view')).toBeVisible()
+}
+
 test.describe('Task Bucket Select', () => {
 	test('Shows the current bucket name when opening a task from a kanban view', async ({authenticatedPage: page}) => {
 		const {project, view, buckets, task} = await createKanbanTaskInBucket()
@@ -41,6 +47,7 @@ test.describe('Task Bucket Select', () => {
 		await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
 		await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
 		await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
+		await openPreviewEditor(page)
 
 		await expect(page.locator('.task-view .subtitle')).toContainText(buckets[0].title)
 	})
@@ -52,6 +59,7 @@ test.describe('Task Bucket Select', () => {
 		await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
 		await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
 		await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
+		await openPreviewEditor(page)
 
 		// Click the bucket name to open the dropdown
 		await page.locator('.task-view .subtitle .bucket-name').click()
@@ -82,6 +90,7 @@ test.describe('Task Bucket Select', () => {
 		await page.goto(`/projects/${projects[0].id}/${views[0].id}`)
 		await page.locator('.tasks .task').filter({hasText: tasks[0].title}).click()
 		await expect(page).toHaveURL(new RegExp(`/tasks/${tasks[0].id}`))
+		await openPreviewEditor(page)
 
 		await expect(page.locator('.task-view .subtitle .bucket-name')).not.toBeVisible()
 	})
@@ -146,6 +155,7 @@ test.describe('Task Bucket Select', () => {
 			await page.goto(`/projects/${project.id}/${listView.id}`)
 			await page.locator('.tasks .task').filter({hasText: task.title}).click()
 			await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
+			await openPreviewEditor(page)
 
 			await expect(page.locator('.task-view .subtitle .bucket-name')).not.toBeVisible()
 		})
@@ -157,6 +167,7 @@ test.describe('Task Bucket Select', () => {
 			await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
 			await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
 			await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
+			await openPreviewEditor(page)
 
 			await expect(page.locator('.task-view .subtitle')).toContainText(bucketsView1[0].title)
 			await page.locator('.task-view .subtitle .bucket-name').click()
@@ -173,6 +184,7 @@ test.describe('Task Bucket Select', () => {
 			await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
 			await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
 			await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
+			await openPreviewEditor(page)
 
 			await expect(page.locator('.task-view .subtitle')).toContainText(bucketsView2[0].title)
 			await page.locator('.task-view .subtitle .bucket-name').click()
@@ -190,6 +202,7 @@ test.describe('Task Bucket Select', () => {
 		await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
 		await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
 		await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
+		await openPreviewEditor(page)
 
 		// Change the bucket
 		await page.locator('.task-view .subtitle .bucket-name').click()

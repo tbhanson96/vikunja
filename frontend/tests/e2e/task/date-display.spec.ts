@@ -84,7 +84,7 @@ test.describe('Date display setting', () => {
 
 			await page.clock.install({time: now})
 			await login(page, apiContext, user)
-			await page.goto(`/tasks/${task.id}`)
+			await page.goto(`/tasks/${task.id}/edit`)
 			await expect(page.locator('.task-view .created time span')).toContainText(expected)
 		})
 	})
@@ -105,7 +105,7 @@ test.describe('Date display setting', () => {
 
 			await page.clock.install({time: now})
 			await login(page, apiContext, user)
-			await page.goto(`/tasks/${task.id}`)
+			await page.goto(`/tasks/${task.id}/edit`)
 			await expect(page.locator('.task-view .created time span')).toContainText(expected)
 		})
 	})

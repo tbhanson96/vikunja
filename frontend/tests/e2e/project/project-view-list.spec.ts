@@ -45,6 +45,28 @@ test.describe('Project View List', () => {
 		await expect(page).toHaveURL(new RegExp(`/tasks/${tasks[0].id}`))
 	})
 
+	test('Should open a task preview and navigate to the edit view', async ({authenticatedPage: page}) => {
+		await createProjects(1)
+		const tasks = await TaskFactory.create(1, {
+			id: '{increment}',
+			project_id: 1,
+			title: 'Preview task',
+			description: 'Preview description',
+		})
+		await page.goto('/projects/1/1')
+
+		await page.locator('.tasks .task .tasktext').filter({hasText: tasks[0].title}).first().click()
+
+		await expect(page).toHaveURL(new RegExp(`/tasks/${tasks[0].id}`))
+		await expect(page.locator('.task-preview')).toBeVisible()
+		await expect(page.locator('.task-preview')).toContainText('Preview task')
+
+		await page.locator('.task-preview .button').filter({hasText: 'Edit'}).click()
+
+		await expect(page).toHaveURL(new RegExp(`/tasks/${tasks[0].id}/edit`))
+		await expect(page.locator('.task-view')).toBeVisible()
+	})
+
 	test('Should not see any elements for a project which is shared read only', async ({authenticatedPage: page}) => {
 		await UserFactory.create(2)
 		await UserProjectFactory.create(1, {

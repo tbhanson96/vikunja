@@ -19,7 +19,7 @@ test.describe('Reply to a task comment', () => {
 			comment: 'Original message that we will quote.',
 		})
 
-		await page.goto('/tasks/1')
+		await page.goto('/tasks/1/edit')
 		await page.waitForLoadState('networkidle')
 
 		const originalComment = page.locator('#comment-1')

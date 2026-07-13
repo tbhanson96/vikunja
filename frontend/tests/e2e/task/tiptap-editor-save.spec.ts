@@ -37,7 +37,7 @@ test.describe('TipTap Editor Save', () => {
 			}
 		})
 
-		await page.goto(`/tasks/${tasks[0].id}`)
+		await page.goto(`/tasks/${tasks[0].id}/edit`)
 		await page.waitForLoadState('networkidle')
 
 		// Click edit button to enter edit mode
@@ -67,11 +67,11 @@ test.describe('TipTap Editor Save', () => {
 		const insertBeforeErrors = [
 			...pageErrors.filter(e =>
 				e.message.includes('insertBefore') ||
-				e.message.includes("Cannot read properties of null")
+				e.message.includes('Cannot read properties of null'),
 			),
 			...consoleErrors.filter(msg =>
 				msg.includes('insertBefore') ||
-				msg.includes("Cannot read properties of null")
+				msg.includes('Cannot read properties of null'),
 			),
 		]
 
@@ -104,7 +104,7 @@ test.describe('TipTap Editor Save', () => {
 			}
 		})
 
-		await page.goto(`/tasks/${tasks[0].id}`)
+		await page.goto(`/tasks/${tasks[0].id}/edit`)
 		await page.waitForLoadState('networkidle')
 
 		// Perform multiple edit/save cycles to stress test the mode transitions
@@ -143,11 +143,11 @@ test.describe('TipTap Editor Save', () => {
 			const domErrors = [
 				...pageErrors.filter(e =>
 					e.message.includes('insertBefore') ||
-					e.message.includes("Cannot read properties of null")
+					e.message.includes('Cannot read properties of null'),
 				),
 				...consoleErrors.filter(msg =>
 					msg.includes('insertBefore') ||
-					msg.includes("Cannot read properties of null")
+					msg.includes('Cannot read properties of null'),
 				),
 			]
 

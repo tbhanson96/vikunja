@@ -148,7 +148,7 @@ export const KEYBOARD_SHORTCUTS: ShortcutGroup[] = [
 	},
 	{
 		title: 'keyboardShortcuts.task.title',
-		available: (route) => route.name === 'task.detail',
+		available: (route) => route.name === 'task.edit',
 		shortcuts: [
 			{
 				title: 'keyboardShortcuts.task.done',

@@ -58,7 +58,7 @@ test.describe('Link shares', () => {
 	test('Should work when directly viewing a task with share hash present', async ({page, apiContext}) => {
 		const {share, project, tasks} = await prepareLinkShare()
 
-		await page.goto(`/tasks/${tasks[0].id}#share-auth-token=${share.hash}`)
+		await page.goto(`/tasks/${tasks[0].id}/edit#share-auth-token=${share.hash}`)
 
 		await expect(page.locator('h1.title.input')).toContainText(tasks[0].title)
 	})

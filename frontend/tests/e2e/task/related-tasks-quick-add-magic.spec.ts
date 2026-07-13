@@ -18,7 +18,7 @@ test.describe('Related tasks quick add magic', () => {
 		await createDefaultViews(project.id)
 		const parent = (await TaskFactory.create(1, {id: 1, title: 'Parent task', project_id: project.id}, false))[0]
 
-		await page.goto(`/tasks/${parent.id}`)
+		await page.goto(`/tasks/${parent.id}/edit`)
 		const input = await openRelatedTasksForm(page)
 		await input.fill('Subtask one *Urgent')
 		await input.press('Enter')
@@ -39,7 +39,7 @@ test.describe('Related tasks quick add magic', () => {
 		await createDefaultViews(project.id)
 		const parent = (await TaskFactory.create(1, {id: 1, title: 'Parent task', project_id: project.id}, false))[0]
 
-		await page.goto(`/tasks/${parent.id}`)
+		await page.goto(`/tasks/${parent.id}/edit`)
 		const input = await openRelatedTasksForm(page)
 		await input.fill('Important work !4')
 		await input.press('Enter')
@@ -60,7 +60,7 @@ test.describe('Related tasks quick add magic', () => {
 		await createDefaultViews(projectB.id, 5)
 		const parent = (await TaskFactory.create(1, {id: 1, title: 'Parent task', project_id: projectA.id}, false))[0]
 
-		await page.goto(`/tasks/${parent.id}`)
+		await page.goto(`/tasks/${parent.id}/edit`)
 		const input = await openRelatedTasksForm(page)
 		await input.fill('Cross task +TargetProject')
 		await input.press('Enter')
@@ -83,7 +83,7 @@ test.describe('Related tasks quick add magic', () => {
 		const parent = (await TaskFactory.create(1, {id: 1, title: 'Parent task', project_id: project.id, created_by_id: user.id}, false))[0]
 
 		await login(page, apiContext, user)
-		await page.goto(`/tasks/${parent.id}`)
+		await page.goto(`/tasks/${parent.id}/edit`)
 
 		const input = await openRelatedTasksForm(page)
 		await input.fill('Buy milk *Urgent')

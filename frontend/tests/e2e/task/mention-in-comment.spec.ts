@@ -20,7 +20,7 @@ test.describe('Mention in task comment', () => {
 			}
 		})
 
-		await page.goto('/tasks/1')
+		await page.goto('/tasks/1/edit')
 		await page.waitForLoadState('networkidle')
 
 		// Wait for comment input editor to be visible (the editable one)
@@ -55,7 +55,7 @@ test.describe('Mention in task comment', () => {
 	})
 
 	test('can type mention without error notifications appearing', async ({authenticatedPage: page}) => {
-		await page.goto('/tasks/1')
+		await page.goto('/tasks/1/edit')
 		await page.waitForLoadState('networkidle')
 
 		// Wait for comment input editor to be visible (the editable one)
