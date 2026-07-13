@@ -58,7 +58,7 @@
 						:to="editRoute"
 					>
 						<Icon icon="pen" />
-						{{ $t('misc.edit') }}
+						{{ $t('project.list.editTask') }}
 					</RouterLink>
 				</div>
 			</header>
