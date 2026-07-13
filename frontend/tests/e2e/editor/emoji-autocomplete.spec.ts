@@ -23,7 +23,7 @@ test.describe('Emoji Autocomplete', () => {
 			index: 1,
 		})
 
-		await page.goto(`/tasks/${tasks[0].id}`)
+		await page.goto(`/tasks/${tasks[0].id}/edit`)
 		await page.waitForLoadState('networkidle')
 
 		const editButton = page.locator('.task-view .details.content.description .tiptap button.done-edit').filter({hasText: 'Edit'})
@@ -64,7 +64,7 @@ test.describe('Emoji Autocomplete', () => {
 			index: 1,
 		})
 
-		await page.goto(`/tasks/${tasks[0].id}`)
+		await page.goto(`/tasks/${tasks[0].id}/edit`)
 		await page.waitForLoadState('networkidle')
 
 		const editButton = page.locator('.task-view .details.content.description .tiptap button.done-edit').filter({hasText: 'Edit'})

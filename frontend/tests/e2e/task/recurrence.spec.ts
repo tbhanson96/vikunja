@@ -13,7 +13,7 @@ test.describe('Task recurrence', () => {
 			project_id: 1,
 			due_date: new Date(Date.now() + 86_400_000).toISOString(),
 		}, false)
-		await page.goto(`/tasks/${task.id}`)
+		await page.goto(`/tasks/${task.id}/edit`)
 
 		// Reveal the RepeatAfter component (hidden until the user activates it)
 		await page.getByRole('button', {name: 'Set Repeating Interval'}).click()
@@ -38,7 +38,7 @@ test.describe('Task recurrence', () => {
 			repeat_after: 86400,
 		}, false)
 
-		await page.goto(`/tasks/${task.id}`)
+		await page.goto(`/tasks/${task.id}/edit`)
 
 		const completed = page.waitForResponse(r =>
 			r.url().includes(`/tasks/${task.id}`) && r.request().method() === 'POST',
@@ -63,7 +63,7 @@ test.describe('Task recurrence', () => {
 
 	test('monthly repeat mode hides the amount field', async ({authenticatedPage: page}) => {
 		const [task] = await TaskFactory.create(1, {id: 1, project_id: 1}, false)
-		await page.goto(`/tasks/${task.id}`)
+		await page.goto(`/tasks/${task.id}/edit`)
 
 		// Reveal the RepeatAfter component (hidden until the user activates it)
 		await page.getByRole('button', {name: 'Set Repeating Interval'}).click()

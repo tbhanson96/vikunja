@@ -275,7 +275,7 @@ test.describe('Task', () => {
 				index: 1,
 				description: 'Lorem ipsum dolor sit amet.',
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view h1.title.input')).toContainText(tasks[0].title)
 			await expect(page.locator('.task-view span.title.task-id')).toContainText('#1')
@@ -291,7 +291,7 @@ test.describe('Task', () => {
 				done: true,
 				done_at: new Date().toISOString(),
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view .heading .is-done')).toBeVisible()
 			await expect(page.locator('.task-view .heading .is-done')).toContainText('Done')
@@ -305,7 +305,7 @@ test.describe('Task', () => {
 				id: 1,
 				done: false,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Mark task done!'}).click()
 
@@ -326,7 +326,7 @@ test.describe('Task', () => {
 				index: 1,
 			})
 
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view span.title.task-id')).toContainText(`${projects[0].identifier}-${tasks[0].index}`)
 		})
@@ -336,7 +336,7 @@ test.describe('Task', () => {
 				id: 1,
 				description: 'Lorem ipsum dolor sit amet.',
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			// Wait for the edit button to be visible
@@ -362,14 +362,14 @@ test.describe('Task', () => {
 				description: 'Old Description',
 			})
 
-			await page.goto('/tasks/1')
+			await page.goto('/tasks/1/edit')
 
 			await page.locator('.task-view .details.content.description .tiptap button.done-edit', {timeout: 30_000}).click()
 			await page.locator('.task-view .details.content.description .tiptap__editor .tiptap.ProseMirror').fill('New Description')
 
 			await page.locator('.task-view nav.subtitle a').first().click()
 
-			await page.goto('/tasks/1')
+			await page.goto('/tasks/1/edit')
 			await expect(page.locator('.task-view .details.content.description')).toContainText('New Description')
 		})
 
@@ -378,7 +378,7 @@ test.describe('Task', () => {
 				id: 1,
 				description: '',
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view .details.content.description .tiptap.ProseMirror p')).toHaveAttribute('data-placeholder')
 			await expect(page.locator('.task-view .details.content.description .tiptap button.done-edit')).not.toBeVisible()
@@ -389,7 +389,7 @@ test.describe('Task', () => {
 				id: 1,
 				description: 'Lorem Ipsum dolor sit amet',
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view .details.content.description .tiptap.ProseMirror p')).not.toHaveAttribute('data-placeholder')
 			await expect(page.locator('.task-view .details.content.description .tiptap button.done-edit')).toBeVisible()
@@ -400,7 +400,7 @@ test.describe('Task', () => {
 				id: 1,
 				description: '<p>Lorem Ipsum dolor sit amet</p>',
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view .details.content.description .tiptap.ProseMirror p')).not.toHaveAttribute('data-placeholder')
 			await expect(page.locator('.task-view .details.content.description .tiptap button.done-edit')).toBeVisible()
@@ -410,7 +410,7 @@ test.describe('Task', () => {
 			const tasks = await TaskFactory.create(1, {
 				id: 1,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view .comments .media.comment .tiptap__editor .tiptap.ProseMirror')).toBeVisible()
 			await page.locator('.task-view .comments .media.comment .tiptap__editor .tiptap.ProseMirror').fill('New Comment')
@@ -432,7 +432,7 @@ test.describe('Task', () => {
 				id: 1,
 				project_id: projects[0].id,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: /^Move$/}).click()
 			const multiselectInput = page.locator('.task-view .content.details .field .multiselect.control .input-wrapper input')
@@ -452,7 +452,7 @@ test.describe('Task', () => {
 				id: 1,
 				project_id: 1,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view .action-buttons .button').filter({hasText: 'Delete'})).toBeVisible()
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Delete'}).click()
@@ -480,7 +480,7 @@ test.describe('Task', () => {
 				user_id: (i: number) => users[i - 1].id,
 			})
 
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			// Wait for the assign button to be visible
@@ -516,7 +516,7 @@ test.describe('Task', () => {
 				user_id: users[1].id,
 			})
 
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .column.assignees .multiselect .input-wrapper span.assignee .remove-assignee').click()
 
@@ -531,7 +531,7 @@ test.describe('Task', () => {
 			})
 			const newLabelText = 'some new label'
 
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view .action-buttons .button').filter({hasText: 'Add Labels'})).toBeVisible()
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Add Labels'}).click()
@@ -550,7 +550,7 @@ test.describe('Task', () => {
 			})
 			const labels = await LabelFactory.create(1)
 
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await addLabelToTaskAndVerify(page, labels[0].title)
 		})
@@ -589,7 +589,7 @@ test.describe('Task', () => {
 				label_id: labels[0].id,
 			})
 
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			const labelWrapper = page.locator('.task-view .details.labels-list .multiselect .input-wrapper')
@@ -612,7 +612,7 @@ test.describe('Task', () => {
 				id: 1,
 				done: false,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			const setDueDateButton = page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Due Date'})
@@ -640,7 +640,7 @@ test.describe('Task', () => {
 				id: 1,
 				done: false,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			const setDueDateButton = page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Due Date'})
@@ -685,7 +685,7 @@ test.describe('Task', () => {
 			today.setMinutes(0)
 			today.setSeconds(0)
 
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			const setDueDateButton = page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Due Date'})
@@ -713,7 +713,7 @@ test.describe('Task', () => {
 			const tasks = await TaskFactory.create(1, {
 				id: 1,
 			}) as Task[]
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			const uploadAttachmentPromise = page.waitForResponse(response =>
 				response.url().includes(`/tasks/${tasks[0].id}/attachments`) && response.request().method() === 'PUT',
@@ -736,7 +736,7 @@ test.describe('Task', () => {
 				id: 1,
 				done: false,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Reminders'}).click()
 			await page.locator('.task-view .columns.details .column button').filter({hasText: 'Add a reminder'}).click()
@@ -755,7 +755,7 @@ test.describe('Task', () => {
 				done: false,
 				due_date: (new Date()).toISOString(),
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Reminders'}).click()
 			await page.locator('.task-view .columns.details .column button').filter({hasText: 'Add a reminder'}).click()
@@ -775,7 +775,7 @@ test.describe('Task', () => {
 				done: false,
 				start_date: (new Date()).toISOString(),
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Reminders'}).click()
 			await page.locator('.task-view .columns.details .column button').filter({hasText: 'Add a reminder'}).click()
@@ -795,7 +795,7 @@ test.describe('Task', () => {
 				done: false,
 				due_date: (new Date()).toISOString(),
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Reminders'}).click()
 			await page.locator('.task-view .columns.details .column button').filter({hasText: 'Add a reminder'}).click()
@@ -819,7 +819,7 @@ test.describe('Task', () => {
 				done: false,
 				due_date: (new Date()).toISOString(),
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Reminders'}).click()
 			await page.locator('.task-view .columns.details .column button').filter({hasText: 'Add a reminder'}).click()
@@ -842,7 +842,7 @@ test.describe('Task', () => {
 				id: 1,
 				done: false,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Reminders'}).click()
 			await page.locator('.task-view .columns.details .column button').filter({hasText: 'Add a reminder'}).click()
@@ -886,7 +886,7 @@ test.describe('Task', () => {
 				id: 1,
 				done: false,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Reminders'}).click()
 			await page.locator('.task-view .columns.details .column button').filter({hasText: 'Add a reminder'}).click()
@@ -903,7 +903,7 @@ test.describe('Task', () => {
 			const tasks = await TaskFactory.create(1, {
 				id: 1,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Priority'}).click()
 			await page.locator('.task-view .columns.details .column').filter({hasText: 'Priority'}).locator('.select select').selectOption('Urgent')
@@ -916,7 +916,7 @@ test.describe('Task', () => {
 			const tasks = await TaskFactory.create(1, {
 				id: 1,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await page.locator('.task-view .action-buttons .button').filter({hasText: 'Set Progress'}).click()
 			await page.locator('.task-view .columns.details .column').filter({hasText: 'Progress'}).locator('.select select').selectOption('50%')
@@ -932,7 +932,7 @@ test.describe('Task', () => {
 			const tasks = await TaskFactory.create(1, {
 				id: 1,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await uploadAttachmentAndVerify(page, tasks[0].id)
 		})
@@ -965,7 +965,7 @@ test.describe('Task', () => {
 				id: 1,
 				project_id: projects[0].id,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await uploadAttachmentAndVerify(page, tasks[0].id)
 
@@ -1036,7 +1036,7 @@ test.describe('Task', () => {
 			expect(uploadResp.ok()).toBe(true)
 
 			// currentUser is already authenticated in the page via the fixture.
-			await page.goto(`/tasks/${sharedTask.id}`)
+			await page.goto(`/tasks/${sharedTask.id}/edit`)
 
 			// The attachment must be visible to the reader.
 			await expect(page.locator('.attachments .attachments .files button.attachment')).toBeVisible()
@@ -1070,7 +1070,7 @@ test.describe('Task', () => {
 	</li>
 </ul>`,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view .checklist-summary')).toContainText('1 of 5 tasks')
 			await page.locator('.tiptap__editor ul > li input[type=checkbox]').nth(2).click()
@@ -1094,7 +1094,7 @@ test.describe('Task', () => {
 	</li>
 </ul>`,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.task-view .checklist-summary')).toContainText('0 of 2 tasks')
 			await page.locator('.tiptap__editor ul > li input[type=checkbox]').first().click()
@@ -1127,7 +1127,7 @@ test.describe('Task', () => {
 	</li>
 </ul>`,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			// Verify all checkboxes are rendered
 			await expect(page.locator('.tiptap__editor ul > li input[type=checkbox]')).toHaveCount(3)
@@ -1178,7 +1178,7 @@ test.describe('Task', () => {
 	</li>
 </ul>`,
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			await expect(page.locator('.tiptap__editor ul > li input[type=checkbox]').first()).toBeVisible()
 			await expect(page.locator('.tiptap__editor h1').filter({hasText: 'Lorem Ipsum'})).toBeVisible()
@@ -1223,7 +1223,7 @@ test.describe('Task', () => {
 				description: `<img src="${apiUrl}/tasks/${tasks[0].id}/attachments/${success[0].id}" alt="test image">`,
 			})
 
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 
 			// Wait for the page to load
 			await page.waitForLoadState('networkidle')
@@ -1266,7 +1266,7 @@ ${Array(30).fill('<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Se
 
 			// Set viewport to ensure content is scrollable
 			await page.setViewportSize({width: 1280, height: 800})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			// Scroll to top and wait for scroll to complete
@@ -1323,7 +1323,7 @@ Everything looks good!
 
 			// Set viewport to ensure content is scrollable
 			await page.setViewportSize({width: 1280, height: 800})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			// Scroll to top and wait for scroll to complete
@@ -1357,7 +1357,7 @@ Everything looks good!
 
 			// Set viewport
 			await page.setViewportSize({width: 1280, height: 800})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			// Scroll to bottom of page and wait for scroll to complete
@@ -1384,7 +1384,7 @@ Everything looks good!
 
 			// Set mobile viewport
 			await page.setViewportSize({width: 375, height: 667})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			// Scroll to top and wait for scroll to complete
@@ -1403,7 +1403,7 @@ Everything looks good!
 				id: 1,
 				description: 'Test text for link',
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			// Click edit button to open editor
@@ -1445,7 +1445,7 @@ Everything looks good!
 				id: 1,
 				description: 'Test text for link',
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			// Scroll the page down
@@ -1496,7 +1496,7 @@ Everything looks good!
 				id: 1,
 				description: 'Test text for link',
 			})
-			await page.goto(`/tasks/${tasks[0].id}`)
+			await page.goto(`/tasks/${tasks[0].id}/edit`)
 			await page.waitForLoadState('networkidle')
 
 			// Click edit button to open editor

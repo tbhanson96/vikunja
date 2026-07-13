@@ -1172,7 +1172,7 @@ async function duplicateCurrentTask() {
 	if (duplicatedTask) {
 		success({message: t('task.detail.duplicateSuccess')})
 		router.push({
-			name: 'task.detail',
+			name: 'task.edit',
 			params: {id: duplicatedTask.id},
 		})
 	}

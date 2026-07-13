@@ -16,7 +16,7 @@ test.describe('Task comment pagination', () => {
 		const body = await response.json()
 		const pageSize = body.max_items_per_page
 		await TaskCommentFactory.create(pageSize + 10)
-		await page.goto('/tasks/1')
+		await page.goto('/tasks/1/edit')
 		await expect(page.locator('.task-view .comments nav.pagination')).toBeVisible()
 	})
 
@@ -25,7 +25,7 @@ test.describe('Task comment pagination', () => {
 		const body = await response.json()
 		const pageSize = body.max_items_per_page
 		await TaskCommentFactory.create(Math.max(1, pageSize - 10))
-		await page.goto('/tasks/1')
+		await page.goto('/tasks/1/edit')
 		await expect(page.locator('.task-view .comments nav.pagination')).not.toBeVisible()
 	})
 })

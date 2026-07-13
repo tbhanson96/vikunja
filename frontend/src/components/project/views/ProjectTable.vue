@@ -300,6 +300,7 @@
 
 <script setup lang="ts">
 import {computed, type Ref, watch} from 'vue'
+import {useRouter} from 'vue-router'
 
 import {useStorage} from '@vueuse/core'
 
@@ -332,6 +333,8 @@ const props = defineProps<{
 	projectId: IProject['id'],
 	viewId: IProjectView['id'],
 }>()
+
+const router = useRouter()
 
 const projectStore = useProjectStore()
 
@@ -417,15 +420,13 @@ function setActiveColumnsSortParam() {
 		}, {})
 }
 
-// TODO: re-enable opening task detail in modal
-// const router = useRouter()
 const taskDetailRoutes = computed(() => Object.fromEntries(
 	tasks.value.map(({id}) => ([
 		id,
 		{
 			name: 'task.detail',
 			params: {id},
-			// state: { backdropView: router.currentRoute.value.fullPath },
+			state: {backdropView: router.currentRoute.value.fullPath},
 		},
 	])),
 ))
