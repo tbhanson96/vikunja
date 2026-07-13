@@ -95,8 +95,7 @@
 
 <script lang="ts" setup>
 import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
-import {useRouter, isNavigationFailure, NavigationFailureType} from 'vue-router'
-import type {RouteLocationRaw} from 'vue-router'
+import {useRouter, isNavigationFailure, NavigationFailureType, type RouteLocationRaw} from 'vue-router'
 
 import NotificationService from '@/services/notification'
 import NotificationModel from '@/models/notification'
