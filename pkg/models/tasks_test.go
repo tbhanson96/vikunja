@@ -441,6 +441,44 @@ func TestTask_Update(t *testing.T) {
 		assert.False(t, updatedTask.Done)
 		assert.False(t, updatedTask.DoneAt.IsZero(), "done_at should be persisted in database for repeating tasks")
 	})
+	t.Run("repeat as new keeps the occurrence done and creates the next one", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		_, err := s.Where("id = ?", 1).Cols("repeat_after", "repeat_as_new", "due_date").
+			Update(&Task{RepeatAfter: 3600, RepeatAsNew: true, DueDate: time.Unix(1550000000, 0)})
+		require.NoError(t, err)
+		_, err = s.Insert(&TaskAssginee{TaskID: 1, UserID: 1})
+		require.NoError(t, err)
+		_, err = s.Insert(&TaskReminder{TaskID: 1, Reminder: time.Unix(1550003600, 0)})
+		require.NoError(t, err)
+
+		task := &Task{ID: 1}
+		require.NoError(t, task.ReadOne(s, u))
+		task.Done = true
+		task.RepeatAfter = 3600
+		task.RepeatAsNew = true
+		require.NoError(t, task.Update(s, u))
+		require.NoError(t, s.Commit())
+
+		assert.True(t, task.Done)
+		assert.False(t, task.DoneAt.IsZero())
+
+		tasks := []*Task{}
+		require.NoError(t, s.Where("project_id = ? AND title = ?", 1, "task #1").Asc("id").Find(&tasks))
+		require.Len(t, tasks, 2)
+		newTask := tasks[1]
+		assert.False(t, newTask.Done)
+		assert.True(t, newTask.DueDate.After(tasks[0].DueDate))
+		assert.Zero(t, newTask.PercentDone)
+		assert.True(t, newTask.RepeatAsNew)
+
+		db.AssertExists(t, "task_buckets", map[string]interface{}{"task_id": 1, "project_view_id": 4, "bucket_id": 3}, false)
+		db.AssertExists(t, "task_buckets", map[string]interface{}{"task_id": newTask.ID, "project_view_id": 4, "bucket_id": 1}, false)
+		db.AssertExists(t, "label_tasks", map[string]interface{}{"task_id": newTask.ID, "label_id": 4}, false)
+		db.AssertExists(t, "task_assignees", map[string]interface{}{"task_id": newTask.ID, "user_id": 1}, false)
+	})
 	t.Run("repeating tasks marked done from a non-default bucket are moved to the default bucket", func(t *testing.T) {
 		db.LoadAndAssertFixtures(t)
 		s := db.NewSession()

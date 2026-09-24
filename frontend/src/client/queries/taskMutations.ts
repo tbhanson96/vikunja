@@ -54,6 +54,7 @@ const writableFields = [
 	'percent_done',
 	'repeat_after',
 	'repeat_mode',
+	'repeat_as_new',
 	'is_favorite',
 	'bucket_id',
 	'project_id',

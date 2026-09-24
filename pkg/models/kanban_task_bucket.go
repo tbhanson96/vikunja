@@ -134,6 +134,7 @@ func updateTaskBucket(s *xorm.Session, a web.Auth, b *TaskBucket) (err error) {
 	}
 
 	var updateBucket = true
+	var spawnNextOccurrence bool
 
 	// mark task done if moved into or out of the done bucket
 	// Only change the done state if the task's done value actually changes
@@ -146,18 +147,20 @@ func updateTaskBucket(s *xorm.Session, a web.Auth, b *TaskBucket) (err error) {
 				oldTask := *task
 				oldTask.Done = false
 				updateDone(&oldTask, task)
-				// A repeating task doesn't stay in the done bucket; route
-				// it back to the view's default bucket so the user sees
-				// the next iteration waiting in the "To-Do" column.
-				if view.DefaultBucketID != 0 {
-					b.BucketID = view.DefaultBucketID
+				if task.RepeatAsNew {
+					spawnNextOccurrence = true
 				} else {
-					b.BucketID = oldTaskBucket.BucketID
-				}
-				// The task is already in the correct bucket, so there is
-				// nothing to move and no count to bump.
-				if b.BucketID == oldTaskBucket.BucketID {
-					updateBucket = false
+					// A repeating task doesn't stay in the done bucket; route
+					// it back to the view's default bucket so the user sees
+					// the next iteration waiting in the "To-Do" column.
+					if view.DefaultBucketID != 0 {
+						b.BucketID = view.DefaultBucketID
+					} else {
+						b.BucketID = oldTaskBucket.BucketID
+					}
+					if b.BucketID == oldTaskBucket.BucketID {
+						updateBucket = false
+					}
 				}
 			}
 		}
@@ -190,6 +193,13 @@ func updateTaskBucket(s *xorm.Session, a web.Auth, b *TaskBucket) (err error) {
 		err = task.updateReminders(s, task)
 		if err != nil {
 			return
+		}
+
+		if spawnNextOccurrence {
+			_, err = createNextRecurringTask(s, task, task, a)
+			if err != nil {
+				return err
+			}
 		}
 
 		// Since the done state of the task was changed, we need to move the task into all done buckets everywhere

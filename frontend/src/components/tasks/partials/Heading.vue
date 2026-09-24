@@ -93,7 +93,7 @@ const copy = useCopyToClipboard()
 const {t} = useI18n({useScope: 'global'})
 
 async function copyUrl() {
-	const route = router.resolve({name: 'task.detail', query: {taskId: props.task.id}})
+	const route = router.resolve({name: 'task.detail', params: {id: props.task.id}})
 	const absoluteURL = new URL(route.href, window.location.href).href
 
 	await copy(absoluteURL)

@@ -40,6 +40,7 @@ export type TaskResponse = Omit<TaskReadOneBody,
 	'bucket_id' |
 	'repeat_after' |
 	'repeat_mode' |
+	'repeat_as_new' |
 	'cover_image_attachment_id' |
 	'labels' |
 	'assignees' |
@@ -63,6 +64,7 @@ export type TaskResponse = Omit<TaskReadOneBody,
 	bucket_id: number
 	repeat_after: number
 	repeat_mode: number
+	repeat_as_new: boolean
 	cover_image_attachment_id: number
 	labels: Label[]
 	assignees: User[]
@@ -108,6 +110,7 @@ export function normalizeTask(task: Task): TaskResponse {
 		bucket_id: task.bucket_id ?? 0,
 		repeat_after: task.repeat_after ?? 0,
 		repeat_mode: task.repeat_mode ?? 0,
+		repeat_as_new: task.repeat_as_new ?? false,
 		cover_image_attachment_id: task.cover_image_attachment_id ?? 0,
 		labels: task.labels ?? [],
 		assignees: task.assignees ?? [],

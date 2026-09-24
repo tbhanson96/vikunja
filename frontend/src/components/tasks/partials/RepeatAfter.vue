@@ -90,6 +90,20 @@
 				</div>
 			</div>
 		</div>
+		<div class="field mbs-3">
+			<label class="checkbox">
+				<input
+					v-model="task.repeat_as_new"
+					:disabled="disabled || undefined"
+					type="checkbox"
+					@change="updateData"
+				>
+				{{ $t('task.repeat.asNew') }}
+			</label>
+			<p class="help">
+				{{ $t('task.repeat.asNewHint') }}
+			</p>
+		</div>
 	</div>
 </template>
 
@@ -125,7 +139,11 @@ const repeatAfter = reactive({
 
 watch(
 	() => props.modelValue,
-	(value: ITask) => {
+	(value: ITask | undefined) => {
+		if (!value) {
+			task.value = createTaskDraft()
+			return
+		}
 		task.value = {...value}
 		if (typeof value.repeat_after !== 'undefined') {
 			Object.assign(repeatAfter, parseRepeatAfter(value.repeat_after))

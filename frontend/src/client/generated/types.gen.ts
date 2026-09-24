@@ -2163,6 +2163,10 @@ export type Task = {
      */
     repeat_after?: number;
     /**
+     * When enabled for a recurring task, marking it done closes the current occurrence and creates a new open task for the next occurrence instead of re-opening the same task.
+     */
+    repeat_as_new?: boolean;
+    /**
      * How the task repeats when marked done: 0 = after repeat_after seconds, 1 = monthly (ignores repeat_after), 2 = from the current date rather than the last set date.
      */
     repeat_mode?: number;
@@ -2499,6 +2503,10 @@ export type TaskReadOneBody = {
      * The interval in seconds this task repeats. When set, marking the task done re-opens it and bumps its reminders and due date by this amount.
      */
     repeat_after?: number;
+    /**
+     * When enabled for a recurring task, marking it done closes the current occurrence and creates a new open task for the next occurrence instead of re-opening the same task.
+     */
+    repeat_as_new?: boolean;
     /**
      * How the task repeats when marked done: 0 = after repeat_after seconds, 1 = monthly (ignores repeat_after), 2 = from the current date rather than the last set date.
      */
@@ -4418,6 +4426,10 @@ export type TaskWritable = {
      */
     repeat_after?: number;
     /**
+     * When enabled for a recurring task, marking it done closes the current occurrence and creates a new open task for the next occurrence instead of re-opening the same task.
+     */
+    repeat_as_new?: boolean;
+    /**
      * How the task repeats when marked done: 0 = after repeat_after seconds, 1 = monthly (ignores repeat_after), 2 = from the current date rather than the last set date.
      */
     repeat_mode?: number;
@@ -4518,6 +4530,10 @@ export type TaskReadOneBodyWritable = {
      * The interval in seconds this task repeats. When set, marking the task done re-opens it and bumps its reminders and due date by this amount.
      */
     repeat_after?: number;
+    /**
+     * When enabled for a recurring task, marking it done closes the current occurrence and creates a new open task for the next occurrence instead of re-opening the same task.
+     */
+    repeat_as_new?: boolean;
     /**
      * How the task repeats when marked done: 0 = after repeat_after seconds, 1 = monthly (ignores repeat_after), 2 = from the current date rather than the last set date.
      */

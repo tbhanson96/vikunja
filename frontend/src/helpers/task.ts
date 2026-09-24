@@ -25,6 +25,7 @@ export function createTaskDraft(data: Partial<Task> = {}): Task {
 		bucket_id: data.bucket_id ?? 0,
 		repeat_after: data.repeat_after ?? 0,
 		repeat_mode: data.repeat_mode ?? 0,
+		repeat_as_new: data.repeat_as_new ?? false,
 		percent_done: data.percent_done ?? 0,
 		hex_color: data.hex_color ?? '',
 		is_favorite: data.is_favorite ?? false,

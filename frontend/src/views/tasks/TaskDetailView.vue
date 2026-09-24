@@ -765,7 +765,7 @@ const task = ref<ITask>(createTaskDraft())
 
 // Only fields edited here stay local; the rest follows the cache.
 function followServerFields(loaded: ITask) {
-	const {priority, percent_done, due_date, start_date, end_date, reminders, repeat_after, repeat_mode} = task.value
+	const {priority, percent_done, due_date, start_date, end_date, reminders, repeat_after, repeat_mode, repeat_as_new} = task.value
 	task.value = {
 		...createTaskDraft(klona(loaded)),
 		priority,
@@ -776,6 +776,7 @@ function followServerFields(loaded: ITask) {
 		reminders,
 		repeat_after,
 		repeat_mode,
+		repeat_as_new,
 	}
 }
 
@@ -1216,7 +1217,7 @@ async function duplicateCurrentTask() {
 	if (duplicatedTask) {
 		success({message: t('task.detail.duplicateSuccess')})
 		router.push({
-			name: 'task.detail',
+			name: 'task.edit',
 			params: {id: duplicatedTask.id},
 		})
 	}
