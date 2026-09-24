@@ -43,7 +43,7 @@ test.describe('Comment sort order', () => {
 
 	test('defaults to oldest first', async ({authenticatedPage: page}) => {
 		await createCommentsWithTimestamps(3)
-		await page.goto('/tasks/1/edit')
+		await page.goto('/tasks/1')
 
 		const comments = commentLocators(page)
 		// Wait for comments to load
@@ -59,7 +59,7 @@ test.describe('Comment sort order', () => {
 
 	test('toggles to newest first', async ({authenticatedPage: page}) => {
 		await createCommentsWithTimestamps(3)
-		await page.goto('/tasks/1/edit')
+		await page.goto('/tasks/1')
 
 		const comments = commentLocators(page)
 		await expect(comments.first()).toBeVisible({timeout: 10000})
@@ -77,7 +77,7 @@ test.describe('Comment sort order', () => {
 
 	test('new comment appears at the top when newest first', async ({authenticatedPage: page}) => {
 		await createCommentsWithTimestamps(3)
-		await page.goto('/tasks/1/edit')
+		await page.goto('/tasks/1')
 
 		const comments = commentLocators(page)
 		await expect(comments.first()).toBeVisible({timeout: 10000})
@@ -92,7 +92,9 @@ test.describe('Comment sort order', () => {
 		await expect(newCommentEditor).toBeVisible({timeout: 10000})
 		await newCommentEditor.click()
 		await newCommentEditor.fill('Brand new comment')
-		await page.locator('.task-view .comments .media.comment .button:not([disabled])').filter({hasText: 'Comment'}).click()
+		const commentButton = page.locator('.task-view .comments').getByRole('button', {name: 'Comment', exact: true})
+		await expect(commentButton).not.toHaveAttribute('aria-disabled', 'true')
+		await commentButton.click()
 
 		await expect(page.locator('.global-notification')).toContainText('Success')
 
@@ -103,7 +105,7 @@ test.describe('Comment sort order', () => {
 	test('scrolls to top when adding a comment in newest first mode', async ({authenticatedPage: page}) => {
 		// Create enough comments to make the page scrollable
 		await createCommentsWithTimestamps(10)
-		await page.goto('/tasks/1/edit')
+		await page.goto('/tasks/1')
 
 		const comments = commentLocators(page)
 		await expect(comments.first()).toBeVisible({timeout: 10000})
@@ -117,7 +119,9 @@ test.describe('Comment sort order', () => {
 		await expect(newCommentEditor).toBeVisible({timeout: 10000})
 		await newCommentEditor.click()
 		await newCommentEditor.fill('Scroll test comment')
-		await page.locator('.task-view .comments .media.comment .button:not([disabled])').filter({hasText: 'Comment'}).click()
+		const commentButton = page.locator('.task-view .comments').getByRole('button', {name: 'Comment', exact: true})
+		await expect(commentButton).not.toHaveAttribute('aria-disabled', 'true')
+		await commentButton.click()
 
 		await expect(page.locator('.global-notification')).toContainText('Success')
 
@@ -132,7 +136,7 @@ test.describe('Comment sort order', () => {
 		const pageSize = body.max_items_per_page
 
 		await createCommentsWithTimestamps(pageSize + 5)
-		await page.goto('/tasks/1/edit')
+		await page.goto('/tasks/1')
 
 		const comments = commentLocators(page)
 		await expect(comments.first()).toBeVisible({timeout: 10000})
@@ -153,7 +157,7 @@ test.describe('Comment sort order', () => {
 
 	test('works with initial load (fewer comments than page size)', async ({authenticatedPage: page}) => {
 		await createCommentsWithTimestamps(3)
-		await page.goto('/tasks/1/edit')
+		await page.goto('/tasks/1')
 
 		const comments = commentLocators(page)
 		await expect(comments.first()).toBeVisible({timeout: 10000})
@@ -172,7 +176,7 @@ test.describe('Comment sort order', () => {
 
 	test('persists sort order setting', async ({authenticatedPage: page}) => {
 		await createCommentsWithTimestamps(3)
-		await page.goto('/tasks/1/edit')
+		await page.goto('/tasks/1')
 
 		const comments = commentLocators(page)
 		await expect(comments.first()).toBeVisible({timeout: 10000})
@@ -202,7 +206,7 @@ test.describe('Comment sort order', () => {
 		await createCommentsWithTimestamps(3)
 
 		await login(page, apiContext, user)
-		await page.goto('/tasks/1/edit')
+		await page.goto('/tasks/1')
 
 		const comments = commentLocators(page)
 		await expect(comments.first()).toBeVisible({timeout: 10000})

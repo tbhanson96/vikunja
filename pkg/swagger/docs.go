@@ -1792,7 +1792,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "A message telling you everything was migrated successfully.",
+                        "description": "A message telling you the migration was started.",
                         "schema": {
                             "$ref": "#/definitions/models.Message"
                         }
@@ -1918,7 +1918,7 @@ const docTemplate = `{
                         "JWTKeyAuth": []
                     }
                 ],
-                "description": "Returns an array with all notifications for the current user.",
+                "description": "Returns an array with all notifications for the current user. Notifications about a project the current user can no longer read are omitted; the filtering happens in the query, so paging and the ` + "`" + `x-pagination-*` + "`" + ` headers all describe the visible notifications only.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1992,6 +1992,44 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "JWTKeyAuth": []
+                    }
+                ],
+                "description": "Deletes every notification belonging to the authenticated user. Only the caller's own notifications are affected.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "subscriptions"
+                ],
+                "summary": "Delete all notifications of the current user",
+                "responses": {
+                    "200": {
+                        "description": "All notifications deleted.",
+                        "schema": {
+                            "$ref": "#/definitions/models.Message"
+                        }
+                    },
+                    "403": {
+                        "description": "Link shares cannot have notifications.",
+                        "schema": {
+                            "$ref": "#/definitions/web.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "$ref": "#/definitions/models.Message"
+                        }
+                    }
+                }
             }
         },
         "/notifications/{id}": {
@@ -2042,6 +2080,115 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal error",
+                        "schema": {
+                            "$ref": "#/definitions/models.Message"
+                        }
+                    }
+                }
+            }
+        },
+        "/oauth/authorize": {
+            "post": {
+                "security": [
+                    {
+                        "JWTKeyAuth": []
+                    }
+                ],
+                "description": "Creates an authorization code for an OAuth 2.0 client on behalf of the authenticated user. PKCE is required. API tokens cannot be used to authorize a client.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "OAuth 2.0 authorize endpoint",
+                "parameters": [
+                    {
+                        "description": "The authorization request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/oauth2server.AuthorizeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The authorization code and the redirect URI to return it to.",
+                        "schema": {
+                            "$ref": "#/definitions/oauth2server.AuthorizeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "response_type is not 'code', the redirect URI is invalid, or the PKCE challenge is missing.",
+                        "schema": {
+                            "$ref": "#/definitions/web.HTTPError"
+                        }
+                    },
+                    "403": {
+                        "description": "An API token was used to authorize an OAuth client.",
+                        "schema": {
+                            "$ref": "#/definitions/models.Message"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error.",
+                        "schema": {
+                            "$ref": "#/definitions/models.Message"
+                        }
+                    }
+                }
+            }
+        },
+        "/oauth/token": {
+            "post": {
+                "description": "Exchanges an authorization code for an access token, or a refresh token for a new one. Part of the OAuth 2.0 Authorization Code flow with PKCE. Needs no authentication: the grant itself is the credential.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "OAuth 2.0 token endpoint",
+                "parameters": [
+                    {
+                        "description": "The token request",
+                        "name": "grant",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/oauth2server.TokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The access token, its type, lifetime and refresh token.",
+                        "schema": {
+                            "$ref": "#/definitions/oauth2server.TokenResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Unsupported grant type, or an invalid, expired or already-used authorization code.",
+                        "schema": {
+                            "$ref": "#/definitions/web.HTTPError"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid or expired refresh token.",
+                        "schema": {
+                            "$ref": "#/definitions/web.HTTPError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error.",
                         "schema": {
                             "$ref": "#/definitions/models.Message"
                         }
@@ -4759,7 +4906,7 @@ const docTemplate = `{
                         "JWTKeyAuth": []
                     }
                 ],
-                "description": "Unsubscribes the current user to an entity.",
+                "description": "Unsubscribes the current user to an entity. If the subscription is inherited from a parent project, an opt-out is stored for this entity instead.",
                 "consumes": [
                     "application/json"
                 ],
@@ -9136,13 +9283,15 @@ const docTemplate = `{
                 0,
                 1,
                 2,
-                3
+                3,
+                4
             ],
             "x-enum-varnames": [
                 "FeatureUnknown",
                 "FeatureAdminPanel",
                 "FeatureTimeTracking",
-                "FeatureAuditLogs"
+                "FeatureAuditLogs",
+                "FeatureUserInvites"
             ]
         },
         "license.Info": {
@@ -9182,9 +9331,34 @@ const docTemplate = `{
                 }
             }
         },
+        "migration.ErrorKind": {
+            "type": "string",
+            "enum": [
+                "reported",
+                "interrupted",
+                "credentials",
+                "queue",
+                "upload",
+                "detail"
+            ],
+            "x-enum-varnames": [
+                "ErrorKindReported",
+                "ErrorKindInterrupted",
+                "ErrorKindCredentials",
+                "ErrorKindQueue",
+                "ErrorKindUpload",
+                "ErrorKindDetail"
+            ]
+        },
         "migration.Status": {
             "type": "object",
             "properties": {
+                "error_kind": {
+                    "$ref": "#/definitions/migration.ErrorKind"
+                },
+                "error_message": {
+                    "type": "string"
+                },
                 "finished_at": {
                     "type": "string"
                 },
@@ -10110,7 +10284,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "project_id": {
-                    "description": "The project this task belongs to.",
+                    "description": "The project this task belongs to.\nMust precede done/due_date: xorm orders composite index columns by struct field order.",
                     "type": "integer"
                 },
                 "reactions": {
@@ -10765,6 +10939,83 @@ const docTemplate = `{
                 }
             }
         },
+        "oauth2server.AuthorizeRequest": {
+            "type": "object",
+            "properties": {
+                "client_id": {
+                    "type": "string"
+                },
+                "code_challenge": {
+                    "type": "string"
+                },
+                "code_challenge_method": {
+                    "type": "string"
+                },
+                "redirect_uri": {
+                    "type": "string"
+                },
+                "response_type": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                }
+            }
+        },
+        "oauth2server.AuthorizeResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "redirect_uri": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
+                }
+            }
+        },
+        "oauth2server.TokenRequest": {
+            "type": "object",
+            "properties": {
+                "client_id": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "code_verifier": {
+                    "type": "string"
+                },
+                "grant_type": {
+                    "type": "string"
+                },
+                "redirect_uri": {
+                    "type": "string"
+                },
+                "refresh_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "oauth2server.TokenResponse": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "type": "string"
+                },
+                "expires_in": {
+                    "type": "integer"
+                },
+                "refresh_token": {
+                    "type": "string"
+                },
+                "token_type": {
+                    "type": "string"
+                }
+            }
+        },
         "openid.Callback": {
             "type": "object",
             "properties": {
@@ -11263,6 +11514,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "description": "The full name of the user.",
+                    "type": "string"
+                },
+                "pending_email": {
                     "type": "string"
                 },
                 "settings": {

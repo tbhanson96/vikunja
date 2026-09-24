@@ -175,12 +175,14 @@ definitions:
     - 1
     - 2
     - 3
+    - 4
     type: integer
     x-enum-varnames:
     - FeatureUnknown
     - FeatureAdminPanel
     - FeatureTimeTracking
     - FeatureAuditLogs
+    - FeatureUserInvites
   license.Info:
     properties:
       expires_at:
@@ -205,8 +207,28 @@ definitions:
       code:
         type: string
     type: object
+  migration.ErrorKind:
+    enum:
+    - reported
+    - interrupted
+    - credentials
+    - queue
+    - upload
+    - detail
+    type: string
+    x-enum-varnames:
+    - ErrorKindReported
+    - ErrorKindInterrupted
+    - ErrorKindCredentials
+    - ErrorKindQueue
+    - ErrorKindUpload
+    - ErrorKindDetail
   migration.Status:
     properties:
+      error_kind:
+        $ref: '#/definitions/migration.ErrorKind'
+      error_message:
+        type: string
       finished_at:
         type: string
       id:
@@ -932,7 +954,9 @@ definitions:
           sort by this later.
         type: integer
       project_id:
-        description: The project this task belongs to.
+        description: |-
+          The project this task belongs to.
+          Must precede done/due_date: xorm orders composite index columns by struct field order.
         type: integer
       reactions:
         allOf:
@@ -1437,6 +1461,56 @@ definitions:
           with the current timestamp.
         type: string
     type: object
+  oauth2server.AuthorizeRequest:
+    properties:
+      client_id:
+        type: string
+      code_challenge:
+        type: string
+      code_challenge_method:
+        type: string
+      redirect_uri:
+        type: string
+      response_type:
+        type: string
+      state:
+        type: string
+    type: object
+  oauth2server.AuthorizeResponse:
+    properties:
+      code:
+        type: string
+      redirect_uri:
+        type: string
+      state:
+        type: string
+    type: object
+  oauth2server.TokenRequest:
+    properties:
+      client_id:
+        type: string
+      code:
+        type: string
+      code_verifier:
+        type: string
+      grant_type:
+        type: string
+      redirect_uri:
+        type: string
+      refresh_token:
+        type: string
+    type: object
+  oauth2server.TokenResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      refresh_token:
+        type: string
+      token_type:
+        type: string
+    type: object
   openid.Callback:
     properties:
       code:
@@ -1809,6 +1883,8 @@ definitions:
         type: boolean
       name:
         description: The full name of the user.
+        type: string
+      pending_email:
         type: string
       settings:
         $ref: '#/definitions/models.UserGeneralSettings'
@@ -3175,7 +3251,7 @@ paths:
       - application/json
       responses:
         "200":
-          description: A message telling you everything was migrated successfully.
+          description: A message telling you the migration was started.
           schema:
             $ref: '#/definitions/models.Message'
         "500":
@@ -3258,10 +3334,38 @@ paths:
       tags:
       - migration
   /notifications:
+    delete:
+      consumes:
+      - application/json
+      description: Deletes every notification belonging to the authenticated user.
+        Only the caller's own notifications are affected.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: All notifications deleted.
+          schema:
+            $ref: '#/definitions/models.Message'
+        "403":
+          description: Link shares cannot have notifications.
+          schema:
+            $ref: '#/definitions/web.HTTPError'
+        "500":
+          description: Internal error
+          schema:
+            $ref: '#/definitions/models.Message'
+      security:
+      - JWTKeyAuth: []
+      summary: Delete all notifications of the current user
+      tags:
+      - subscriptions
     get:
       consumes:
       - application/json
-      description: Returns an array with all notifications for the current user.
+      description: Returns an array with all notifications for the current user. Notifications
+        about a project the current user can no longer read are omitted; the filtering
+        happens in the query, so paging and the `x-pagination-*` headers all describe
+        the visible notifications only.
       parameters:
       - description: The page number. Used for pagination. If not provided, the first
           page of results is returned.
@@ -3348,6 +3452,82 @@ paths:
       summary: Mark a notification as (un-)read
       tags:
       - subscriptions
+  /oauth/authorize:
+    post:
+      consumes:
+      - application/json
+      description: Creates an authorization code for an OAuth 2.0 client on behalf
+        of the authenticated user. PKCE is required. API tokens cannot be used to
+        authorize a client.
+      parameters:
+      - description: The authorization request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/oauth2server.AuthorizeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The authorization code and the redirect URI to return it to.
+          schema:
+            $ref: '#/definitions/oauth2server.AuthorizeResponse'
+        "400":
+          description: response_type is not 'code', the redirect URI is invalid, or
+            the PKCE challenge is missing.
+          schema:
+            $ref: '#/definitions/web.HTTPError'
+        "403":
+          description: An API token was used to authorize an OAuth client.
+          schema:
+            $ref: '#/definitions/models.Message'
+        "500":
+          description: Internal server error.
+          schema:
+            $ref: '#/definitions/models.Message'
+      security:
+      - JWTKeyAuth: []
+      summary: OAuth 2.0 authorize endpoint
+      tags:
+      - auth
+  /oauth/token:
+    post:
+      consumes:
+      - application/json
+      description: 'Exchanges an authorization code for an access token, or a refresh
+        token for a new one. Part of the OAuth 2.0 Authorization Code flow with PKCE.
+        Needs no authentication: the grant itself is the credential.'
+      parameters:
+      - description: The token request
+        in: body
+        name: grant
+        required: true
+        schema:
+          $ref: '#/definitions/oauth2server.TokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The access token, its type, lifetime and refresh token.
+          schema:
+            $ref: '#/definitions/oauth2server.TokenResponse'
+        "400":
+          description: Unsupported grant type, or an invalid, expired or already-used
+            authorization code.
+          schema:
+            $ref: '#/definitions/web.HTTPError'
+        "401":
+          description: Invalid or expired refresh token.
+          schema:
+            $ref: '#/definitions/web.HTTPError'
+        "500":
+          description: Internal server error.
+          schema:
+            $ref: '#/definitions/models.Message'
+      summary: OAuth 2.0 token endpoint
+      tags:
+      - auth
   /projects:
     get:
       consumes:
@@ -5123,7 +5303,8 @@ paths:
     delete:
       consumes:
       - application/json
-      description: Unsubscribes the current user to an entity.
+      description: Unsubscribes the current user to an entity. If the subscription
+        is inherited from a parent project, an opt-out is stored for this entity instead.
       parameters:
       - description: The entity the user subscribed to. Can be either `project` or
           `task`.

@@ -99,8 +99,7 @@ func TestHumaAuthPublic(t *testing.T) {
 	})
 }
 
-// TestHumaRegisterDisabled proves the registration endpoint 404s when
-// registration is disabled, mirroring v1.
+// Public registration remains unavailable without an invitation.
 func TestHumaRegisterDisabled(t *testing.T) {
 	config.ServiceEnableRegistration.Set(false)
 	defer config.ServiceEnableRegistration.Set(true)
@@ -168,6 +167,11 @@ func TestHumaTokenMeta(t *testing.T) {
 	t.Run("token check unauthenticated", func(t *testing.T) {
 		rec := humaRequest(t, e, http.MethodGet, "/api/v2/token/test", "", "", "")
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+	t.Run("token test with api token", func(t *testing.T) {
+		rec := apiTokenReq(e, http.MethodGet, "/api/v2/token/test", "tk_2eef46f40ebab3304919ab2e7e39993f75f29d2e", "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), `"message":"ok"`)
 	})
 	t.Run("routes lists token routes", func(t *testing.T) {
 		rec := humaRequest(t, e, http.MethodGet, "/api/v2/routes", "", userToken, "")

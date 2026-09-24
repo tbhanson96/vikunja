@@ -16,12 +16,12 @@
 				:class="{'has-multiple': hasMultiple, 'has-removal-button': removalAvailable && !disabled}"
 			>
 				<slot
-					v-if="Array.isArray(internalValue)"
+					v-if="multiple"
 					name="items"
-					:items="internalValue"
+					:items="selectedItems"
 					:remove="remove"
 				>
-					<template v-for="(item, key) in internalValue">
+					<template v-for="(item, key) in selectedItems">
 						<slot
 							name="tag"
 							:item="item"
@@ -61,6 +61,7 @@
 					:spellcheck="autocompleteEnabled ? undefined : 'false'"
 					@keyup="search"
 					@keyup.enter.exact.prevent="() => createOrSelectOnEnter()"
+					@keydown="clearKeyupGuard"
 					@keydown.down.exact.prevent="() => preSelect(0)"
 					@keydown.esc="handleEscape"
 					@focus="handleFocus"
@@ -129,8 +130,8 @@
 							class="create-icon"
 						/>
 						<slot
-							name="searchResult"
-							:option="query"
+							name="createOption"
+							:query="query"
 						>
 							<span class="search-result">
 								{{ query }}
@@ -156,7 +157,7 @@
 </template>
 
 <script setup lang="ts" generic="T extends Record<string, unknown>">
-import {computed, onBeforeUnmount, onMounted, ref, toRefs, useId, watch, type ComponentPublicInstance} from 'vue'
+import {computed, onBeforeUnmount, onMounted, ref, toRefs, useId, watch, type ComponentPublicInstance, type Ref} from 'vue'
 import {useI18n} from 'vue-i18n'
 
 import {closeWhenClickedOutside} from '@/helpers/closeWhenClickedOutside'
@@ -245,6 +246,13 @@ const emit = defineEmits<{
 	'remove': [value: T],
 }>()
 
+defineSlots<{
+	items?(props: {items: T[], remove: (item: T) => void}): unknown
+	tag?(props: {item: T}): unknown
+	searchResult?(props: {option: T}): unknown
+	createOption?(props: {query: string}): unknown
+}>()
+
 const listboxId = useId()
 
 const accessibleName = computed(() => props.ariaLabel || props.placeholder || undefined)
@@ -258,12 +266,14 @@ function elementInResults(elem: string | T, label: string, query: string): boole
 	return elem === query
 }
 
-const query = ref<string | T>('')
+const query = ref('')
 const searchTimeout = ref<ReturnType<typeof setTimeout> | null>(null)
 const localLoading = ref(false)
 const showSearchResults = ref(false)
 
-const internalValue = ref<string | T | T[] | null>(null)
+// Split by `multiple` so the multiple value can never hold a single item or the query text.
+const selectedItems = ref([]) as Ref<T[]>
+const selectedItem = ref(null) as Ref<T | null>
 
 onMounted(() => document.addEventListener('click', hideSearchResultsHandler))
 onBeforeUnmount(() => document.removeEventListener('click', hideSearchResultsHandler))
@@ -272,7 +282,14 @@ const {modelValue, searchResults} = toRefs(props)
 
 watch(
 	modelValue,
-	(value) => setSelectedObject(value),
+	(value) => {
+		if (props.multiple) {
+			selectedItems.value = Array.isArray(value) ? value : []
+			query.value = ''
+			return
+		}
+		setSelectedObject(Array.isArray(value) ? null : value)
+	},
 	{
 		immediate: true,
 		deep: true,
@@ -292,8 +309,8 @@ const searchResultsVisible = computed(() => {
 })
 
 const queryHasExactMatch = computed(() => {
-	const hasResult = filteredSearchResults.value.some((elem: T) => elementInResults(elem, props.label, query.value as string))
-	const hasQueryAlreadyAdded = Array.isArray(internalValue.value) && internalValue.value.some((elem: T) => elementInResults(elem, props.label, query.value))
+	const hasResult = filteredSearchResults.value.some((elem: T) => elementInResults(elem, props.label, query.value))
+	const hasQueryAlreadyAdded = props.multiple && selectedItems.value.some((elem: T) => elementInResults(elem, props.label, query.value))
 
 	return hasResult || hasQueryAlreadyAdded
 })
@@ -304,19 +321,18 @@ const creatableAvailable = computed(() => props.creatable && query.value !== '' 
 const creationHintVisible = computed(() => props.creationDisabledMessage !== '' && !props.creatable && query.value !== '' && !queryHasExactMatch.value)
 
 const filteredSearchResults = computed(() => {
-	const currentInternal = internalValue.value
-	if (props.multiple && currentInternal !== null && Array.isArray(currentInternal)) {
-		return searchResults.value.filter((item: T) => !currentInternal.some((e: T) => e === item))
+	if (props.multiple) {
+		return searchResults.value.filter((item: T) => !selectedItems.value.some((e: T) => e === item))
 	}
 
 	return searchResults.value
 })
 
 const hasMultiple = computed(() => {
-	return props.multiple && Array.isArray(internalValue.value) && internalValue.value.length > 0
+	return props.multiple && selectedItems.value.length > 0
 })
 
-const removalAvailable = computed(() => !props.multiple && internalValue.value !== null && query.value !== '' && !(props.loading || localLoading.value))
+const removalAvailable = computed(() => !props.multiple && selectedItem.value !== null && query.value !== '' && !(props.loading || localLoading.value))
 function resetSelectedValue() {
 	select(null)
 }
@@ -327,6 +343,10 @@ const searchInput = ref<HTMLInputElement | null>(null)
 function search(e?: KeyboardEvent) {
 	// The keyup of the Escape that just closed the results must not reopen them.
 	if (e?.key === 'Escape') {
+		return
+	}
+
+	if (ignoreNextKeyup) {
 		return
 	}
 
@@ -372,16 +392,30 @@ function handleEscape(e: KeyboardEvent) {
 	closeSearchResults()
 }
 
-// Set while refocusing the input after Escape so the resulting focus event doesn't reopen the just-closed list.
+// Set while refocusing the input so the resulting focus event doesn't reopen the just-closed list.
 let suppressFocusOpen = false
+
+// Enter activates a result option on keydown, so its keyup lands on the input we refocused and
+// would select or search a second time.
+let ignoreNextKeyup = false
+
+function clearKeyupGuard() {
+	ignoreNextKeyup = false
+}
+
+// Options unmount once the query resets, dropping focus to the body where keystrokes become global shortcuts.
+function refocusInput() {
+	ignoreNextKeyup = true
+	suppressFocusOpen = true
+	searchInput.value?.focus()
+	suppressFocusOpen = false
+}
 
 function closeAndRefocus(e: KeyboardEvent) {
 	e.preventDefault()
 	e.stopPropagation()
 	closeSearchResults()
-	suppressFocusOpen = true
-	searchInput.value?.focus()
-	suppressFocusOpen = false
+	refocusInput()
 }
 
 function handleFocus() {
@@ -399,58 +433,40 @@ function select(object: T | null) {
 	if (object === null) {
 		// Handle clearing the value
 		if (!props.multiple) {
-			internalValue.value = null
+			selectedItem.value = null
 			query.value = ''
 			emit('update:modelValue', null)
 			closeSearchResults()
+			refocusInput()
 		}
 		return
 	}
 
 	if (props.multiple) {
-		if (internalValue.value === null) {
-			internalValue.value = []
-		}
-
-		internalValue.value.push(object)
+		selectedItems.value.push(object)
+		emit('update:modelValue', selectedItems.value)
+		query.value = ''
 	} else {
-		internalValue.value = object
+		emit('update:modelValue', object)
+		setSelectedObject(object)
 	}
 
-	emit('update:modelValue', internalValue.value)
 	emit('select', object)
-	setSelectedObject(object)
 	if (props.closeAfterSelect && filteredSearchResults.value.length > 0 && !creatableAvailable.value) {
 		closeSearchResults()
 	}
+	refocusInput()
 }
 
-function setSelectedObject(object: string | T | null | undefined, resetOnly = false) {
-	internalValue.value = object
-
-	// We assume we're getting an array when multiple is enabled and can therefore leave the query
-	// value etc as it is
-	if (props.multiple) {
-		query.value = ''
-		return
-	}
+function setSelectedObject(object: T | null | undefined) {
+	selectedItem.value = object ?? null
 
 	if (object === null || typeof object === 'undefined') {
 		query.value = ''
 		return
 	}
 
-	if (resetOnly) {
-		return
-	}
-
-	if (typeof object === 'string') {
-		query.value = object
-	} else if (props.label !== '') {
-		query.value = object[props.label] as string
-	} else {
-		query.value = String(object)
-	}
+	query.value = props.label !== '' ? object[props.label] as string : String(object)
 }
 
 const results = ref<(Element | ComponentPublicInstance)[]>([])
@@ -492,11 +508,18 @@ function create() {
 	}
 
 	emit('create', query.value)
-	setSelectedObject(query.value, true)
+	if (props.multiple) {
+		query.value = ''
+	}
 	closeSearchResults()
+	refocusInput()
 }
 
 function createOrSelectOnEnter() {
+	if (ignoreNextKeyup) {
+		return
+	}
+
 	if (!creatableAvailable.value && searchResults.value.length === 1) {
 		select(searchResults.value[0])
 		return
@@ -504,7 +527,7 @@ function createOrSelectOnEnter() {
 
 	if (!creatableAvailable.value) {
 		// Check if there's an exact match for our search term
-		const exactMatch = filteredSearchResults.value.find((elem: T) => elementInResults(elem, props.label, query.value as string))
+		const exactMatch = filteredSearchResults.value.find((elem: T) => elementInResults(elem, props.label, query.value))
 		if (exactMatch) {
 			select(exactMatch)
 		}
@@ -516,14 +539,12 @@ function createOrSelectOnEnter() {
 }
 
 function remove(item: T) {
-	for (let ind = 0; ind < internalValue.value.length; ind++) {
-		if (internalValue.value[ind] === item) {
-			internalValue.value.splice(ind, 1)
-			break
-		}
+	const index = selectedItems.value.findIndex((e: T) => e === item)
+	if (index !== -1) {
+		selectedItems.value.splice(index, 1)
 	}
 
-	emit('update:modelValue', internalValue.value)
+	emit('update:modelValue', selectedItems.value)
 	emit('remove', item)
 }
 
@@ -652,7 +673,7 @@ function focus() {
 	> span:first-child {
 		overflow: hidden;
 		min-inline-size: 0;
-		flex: 1;
+		flex: 1 1 auto;
 	}
 
 	&:focus,
@@ -686,6 +707,12 @@ function focus() {
 
 	&.is-always-visible {
 		color: var(--grey-500);
+	}
+}
+
+@container (inline-size < 250px) {
+	.hint-text {
+		display: none;
 	}
 }
 

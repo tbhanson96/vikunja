@@ -19,6 +19,7 @@ package csv
 import (
 	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"io"
 	"sort"
@@ -32,8 +33,11 @@ import (
 	"code.vikunja.io/api/pkg/user"
 )
 
-// Migrator is the CSV migrator
-type Migrator struct{}
+// The config is only set once the import runs in
+// the background - the request carries it as JSON through SetOptions.
+type Migrator struct {
+	config *ImportConfig
+}
 
 // Name returns the name of this migrator
 func (m *Migrator) Name() string {
@@ -278,8 +282,8 @@ func suggestMapping(columns []string) []ColumnMapping {
 	return mappings
 }
 
-// parseCSV parses CSV data with the given configuration
-func parseCSV(data []byte, delimiter string) ([]string, [][]string, error) {
+// One lookahead record detects migration.maxcsvrows overflow without retaining it (GHSA-pqf9-h8g4-8gmh).
+func parseCSV(data []byte, delimiter string) (headers []string, dataRows [][]string, err error) {
 	data = stripBOM(data)
 
 	// Go's csv.Reader only supports double-quote as the quote character.
@@ -295,28 +299,52 @@ func parseCSV(data []byte, delimiter string) ([]string, [][]string, error) {
 	reader.LazyQuotes = true
 	reader.TrimLeadingSpace = true
 
-	records, err := reader.ReadAll()
+	headers, err = reader.Read()
 	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil, &migration.ErrFileIsEmpty{}
+		}
 		return nil, nil, err
 	}
 
-	if len(records) == 0 {
-		return nil, nil, &migration.ErrFileIsEmpty{}
+	maxRows := config.MigrationMaxCSVRows.GetInt64()
+	if maxRows <= 0 {
+		maxRows = 100000
 	}
-
-	headers := records[0]
-	var dataRows [][]string
-	if len(records) > 1 {
-		dataRows = records[1:]
+	for int64(len(dataRows)) < maxRows {
+		record, readErr := reader.Read()
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return nil, nil, readErr
+		}
+		dataRows = append(dataRows, record)
+	}
+	if _, readErr := reader.Read(); readErr == nil {
+		return nil, nil, &migration.ErrImportRowLimitExceeded{MaxRows: maxRows}
+	} else if !errors.Is(readErr, io.EOF) {
+		return nil, nil, readErr
 	}
 
 	return headers, dataRows, nil
+}
+
+// maxImportFileBytes caps the buffer allocated to read an uploaded CSV file
+// into memory. It mirrors the server's configured upload size limit so a
+// bogus or corrupted size value can't force an unbounded allocation.
+func maxImportFileBytes() int64 {
+	// #nosec G115 -- configured value won't exceed int64 max in practice.
+	return int64(config.GetMaxFileSizeInMBytes()) * 1024 * 1024
 }
 
 // DetectCSVStructure analyzes a CSV file and returns detection results
 func DetectCSVStructure(file io.ReaderAt, size int64) (*DetectionResult, error) {
 	if size == 0 {
 		return nil, &migration.ErrFileIsEmpty{}
+	}
+	if size > maxImportFileBytes() {
+		return nil, &migration.ErrNotACSVFile{}
 	}
 
 	// Read the entire file
@@ -335,6 +363,10 @@ func DetectCSVStructure(file io.ReaderAt, size int64) (*DetectionResult, error) 
 	if err != nil {
 		var emptyErr *migration.ErrFileIsEmpty
 		if errors.As(err, &emptyErr) {
+			return nil, err
+		}
+		var limitErr *migration.ErrImportRowLimitExceeded
+		if errors.As(err, &limitErr) {
 			return nil, err
 		}
 		return nil, &migration.ErrNotACSVFile{}
@@ -381,6 +413,9 @@ func PreviewImport(file io.ReaderAt, size int64, config *ImportConfig) (*Preview
 	if size == 0 {
 		return nil, &migration.ErrFileIsEmpty{}
 	}
+	if size > maxImportFileBytes() {
+		return nil, &migration.ErrNotACSVFile{}
+	}
 
 	data := make([]byte, size)
 	_, err := file.ReadAt(data, 0)
@@ -392,6 +427,10 @@ func PreviewImport(file io.ReaderAt, size int64, config *ImportConfig) (*Preview
 	if err != nil {
 		var emptyErr *migration.ErrFileIsEmpty
 		if errors.As(err, &emptyErr) {
+			return nil, err
+		}
+		var limitErr *migration.ErrImportRowLimitExceeded
+		if errors.As(err, &limitErr) {
 			return nil, err
 		}
 		return nil, &migration.ErrNotACSVFile{}
@@ -553,30 +592,29 @@ func parseDate(value, format string) time.Time {
 // @Failure 400 {object} models.Message "Invalid CSV file or configuration"
 // @Failure 500 {object} models.Message "Internal server error"
 // @Router /migration/csv/migrate [put]
-func (m *Migrator) Migrate(_ *user.User, _ io.ReaderAt, _ int64) error {
-	return &migration.ErrCSVConfigRequired{}
+func (m *Migrator) Migrate(u *user.User, file io.ReaderAt, size int64) error {
+	if m.config == nil {
+		return &migration.ErrCSVConfigRequired{}
+	}
+	return MigrateWithConfig(u, file, size, m.config)
 }
 
-// RunMigration records the migration's start, imports the CSV with the given
-// config and records its finish. Shared by the v1 and v2 HTTP layers so the
-// status bookkeeping around MigrateWithConfig lives in one place.
-func RunMigration(u *user.User, file io.ReaderAt, size int64, config *ImportConfig) error {
-	status, err := migration.StartMigration(&Migrator{}, u)
-	if err != nil {
-		return err
+func (m *Migrator) SetOptions(options []byte) error {
+	config := &ImportConfig{}
+	if err := json.Unmarshal(options, config); err != nil {
+		return &migration.ErrInvalidCSVImportConfig{Err: err}
 	}
-
-	if err := MigrateWithConfig(u, file, size, config); err != nil {
-		return err
-	}
-
-	return migration.FinishMigration(status)
+	m.config = config
+	return nil
 }
 
 // MigrateWithConfig imports CSV data into Vikunja with the provided configuration
 func MigrateWithConfig(u *user.User, file io.ReaderAt, size int64, config *ImportConfig) error {
 	if size == 0 {
 		return &migration.ErrFileIsEmpty{}
+	}
+	if size > maxImportFileBytes() {
+		return &migration.ErrNotACSVFile{}
 	}
 
 	data := make([]byte, size)
@@ -589,6 +627,10 @@ func MigrateWithConfig(u *user.User, file io.ReaderAt, size int64, config *Impor
 	if err != nil {
 		var emptyErr *migration.ErrFileIsEmpty
 		if errors.As(err, &emptyErr) {
+			return err
+		}
+		var limitErr *migration.ErrImportRowLimitExceeded
+		if errors.As(err, &limitErr) {
 			return err
 		}
 		return &migration.ErrNotACSVFile{}
@@ -607,7 +649,6 @@ func MigrateWithConfig(u *user.User, file io.ReaderAt, size int64, config *Impor
 		return &migration.ErrFileIsEmpty{}
 	}
 
-	// Convert rows to Vikunja structure
 	vikunjaTasks := convertToVikunja(rows, config)
 
 	return migration.InsertFromStructure(vikunjaTasks, u)

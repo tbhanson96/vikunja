@@ -94,6 +94,8 @@ type User struct {
 	Password string `xorm:"varchar(250) null" json:"-"`
 	// The user's email address.
 	Email string `xorm:"varchar(250) null" json:"email,omitempty" valid:"email,length(0|250)" maxLength:"250" doc:"The user's email address. Always empty for bot users."`
+	// New address awaiting confirmation; only becomes Email once the confirm token is used.
+	PendingEmail string `xorm:"varchar(250) null" json:"-"`
 
 	Status Status `xorm:"default 0" json:"-"`
 
@@ -247,6 +249,8 @@ type APIUserPassword struct {
 	Email string `json:"email" valid:"email,length(0|250)" maxLength:"250"`
 }
 
+func userMemoKey(id int64) string { return "user-" + strconv.FormatInt(id, 10) }
+
 // GetUserByID returns user by its ID
 func GetUserByID(s *xorm.Session, id int64) (user *User, err error) {
 	// Apparently xorm does otherwise look for all users but return only one, which leads to returning one even if the ID is 0
@@ -254,7 +258,16 @@ func GetUserByID(s *xorm.Session, id int64) (user *User, err error) {
 		return &User{}, ErrUserDoesNotExist{}
 	}
 
-	return getUser(s, &User{ID: id}, false)
+	// The memo holds the raw row, shared with GetUsersByIDs, so the status gate runs on every hit.
+	raw, err := db.Remember(s, userMemoKey(id), func() (*User, error) {
+		return loadUser(s, &User{ID: id}, false)
+	})
+	if err != nil {
+		return &User{}, err
+	}
+
+	u := *raw
+	return &u, finishLoadedUser(&u)
 }
 
 // GetUserByUsername gets a user from its username. This is an extra function to be able to add an extra error check.
@@ -294,11 +307,19 @@ func GetUserWithEmail(s *xorm.Session, user *User) (userOut *User, err error) {
 
 // GetUsersByIDs returns a map of users from a slice of user ids
 func GetUsersByIDs(s *xorm.Session, userIDs []int64) (users map[int64]*User, err error) {
-	if len(userIDs) == 0 {
-		return users, nil
+	loaded, err := db.RememberEach(s, userIDs, userMemoKey, func(missing []int64) (map[int64]*User, error) {
+		return GetUsersByCond(s, builder.In("id", missing))
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	return GetUsersByCond(s, builder.In("id", userIDs))
+	users = make(map[int64]*User, len(loaded))
+	for id, u := range loaded {
+		copied := *u
+		users[id] = &copied
+	}
+	return users, nil
 }
 
 func GetUsersByCond(s *xorm.Session, cond builder.Cond) (users map[int64]*User, err error) {
@@ -317,8 +338,7 @@ func GetUsersByCond(s *xorm.Session, cond builder.Cond) (users map[int64]*User, 
 	return
 }
 
-// getUser is a small helper function to avoid having duplicated code for almost the same use case
-func getUser(s *xorm.Session, user *User, withEmail bool) (userOut *User, err error) {
+func loadUser(s *xorm.Session, user *User, withEmail bool) (userOut *User, err error) {
 	userOut = &User{} // To prevent a panic if user is nil
 	*userOut = *user
 	exists, err := s.Get(userOut)
@@ -333,19 +353,32 @@ func getUser(s *xorm.Session, user *User, withEmail bool) (userOut *User, err er
 		userOut.Email = ""
 	}
 
-	if userOut.OverdueTasksRemindersTime == "" {
-		userOut.OverdueTasksRemindersTime = "9:00"
-	}
-
-	if userOut.Status == StatusDisabled {
-		return userOut, &ErrAccountDisabled{UserID: userOut.ID}
-	}
-
-	if userOut.Status == StatusAccountLocked {
-		return userOut, &ErrAccountLocked{UserID: userOut.ID}
-	}
-
 	return userOut, nil
+}
+
+func getUser(s *xorm.Session, user *User, withEmail bool) (userOut *User, err error) {
+	userOut, err = loadUser(s, user, withEmail)
+	if err != nil {
+		return userOut, err
+	}
+
+	return userOut, finishLoadedUser(userOut)
+}
+
+func finishLoadedUser(u *User) error {
+	if u.OverdueTasksRemindersTime == "" {
+		u.OverdueTasksRemindersTime = "9:00"
+	}
+
+	if u.Status == StatusDisabled {
+		return &ErrAccountDisabled{UserID: u.ID}
+	}
+
+	if u.Status == StatusAccountLocked {
+		return &ErrAccountLocked{UserID: u.ID}
+	}
+
+	return nil
 }
 
 func getUserByUsernameOrEmail(s *xorm.Session, usernameOrEmail string) (u *User, err error) {
@@ -376,7 +409,7 @@ func CheckUserCredentials(ctx context.Context, s *xorm.Session, u *Login) (*User
 	user, err := getUserByUsernameOrEmail(s, u.Username)
 	if err != nil {
 		// hashing the password takes a long time, so we hash something to not make it clear if the username was wrong
-		_, _ = bcrypt.GenerateFromPassword([]byte(u.Username), 14)
+		_, _ = bcrypt.GenerateFromPassword([]byte(u.Username), config.ServiceBcryptRounds.GetInt())
 		return nil, ErrWrongUsernameOrPassword{}
 	}
 
@@ -507,8 +540,16 @@ func GetCurrentUser(c *echo.Context) (user *User, err error) {
 	return GetUserFromClaims(claims)
 }
 
+// AuthTypeUser is the value of the `type` claim in a user JWT
+const AuthTypeUser int = 1
+
 // GetUserFromClaims Returns a new user from jwt claims
 func GetUserFromClaims(claims jwt.MapClaims) (user *User, err error) {
+	typ, ok := claims["type"].(float64)
+	if !ok || int64(typ) != int64(AuthTypeUser) {
+		return nil, ErrInvalidUserContext{Reason: "token is not a user token"}
+	}
+
 	userID, err := getClaimAsInt(claims, "id")
 	if err != nil {
 		return nil, err
@@ -540,7 +581,7 @@ func getClaimAsInt(claims jwt.MapClaims, field string) (int64, error) {
 	if !ok {
 		return 0, &ErrInvalidClaimData{
 			Field: field,
-			Type:  reflect.TypeOf(claims[field]).String(),
+			Type:  fmt.Sprintf("%T", claims[field]),
 		}
 	}
 	return int64(value), nil
@@ -559,7 +600,7 @@ func getClaimAsString(claims jwt.MapClaims, field string) (string, error) {
 	if !ok {
 		return "", &ErrInvalidClaimData{
 			Field: field,
-			Type:  reflect.TypeOf(claims[field]).String(),
+			Type:  fmt.Sprintf("%T", claims[field]),
 		}
 	}
 	return value, nil
@@ -595,6 +636,30 @@ func premarshalFrontendSettings(settings interface{}) (*string, error) {
 	}
 	settingsString := string(settingsJSON)
 	return &settingsString, nil
+}
+
+func userUpdateColumns(s *xorm.Session, user, theUser *User, forceOverride bool) (cols []string, err error) {
+	cols = baseUserUpdateColumns[:]
+
+	if user.Email != "" && user.Email != theUser.Email {
+		// A direct change supersedes a pending one, the link already mailed out must not work anymore.
+		user.PendingEmail = ""
+		cols = append(cols, "pending_email")
+		if err := removeTokens(s, user, TokenEmailConfirm); err != nil {
+			return nil, err
+		}
+	}
+
+	if forceOverride {
+		// forceOverride is set in paths where we should apply the FrontendSettings update.
+		user.FrontendSettings, err = premarshalFrontendSettings(user.FrontendSettings)
+		if err != nil {
+			return nil, err
+		}
+		cols = append(cols, "frontend_settings")
+	}
+
+	return cols, nil
 }
 
 // UpdateUser updates a user
@@ -665,14 +730,9 @@ func UpdateUser(s *xorm.Session, user *User, forceOverride bool) (updatedUser *U
 		return nil, &ErrInvalidTimezone{Name: user.Timezone, LoadError: err}
 	}
 
-	updateCols := baseUserUpdateColumns[:]
-	if forceOverride {
-		// forceOverride is set in paths where we should apply the FrontendSettings update.
-		user.FrontendSettings, err = premarshalFrontendSettings(user.FrontendSettings)
-		if err != nil {
-			return nil, err
-		}
-		updateCols = append(updateCols, "frontend_settings")
+	updateCols, err := userUpdateColumns(s, user, theUser, forceOverride)
+	if err != nil {
+		return nil, err
 	}
 
 	_, err = s.

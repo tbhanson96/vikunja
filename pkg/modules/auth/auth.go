@@ -18,6 +18,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -40,11 +41,12 @@ import (
 	"xorm.io/xorm"
 )
 
-// These are all valid auth types
+// All valid auth types; AuthTypeUser lives in pkg/user since
+// that package parses claims and can't import this one.
 const (
-	AuthTypeUnknown int = iota
-	AuthTypeUser
-	AuthTypeLinkShare
+	AuthTypeUnknown   int = 0
+	AuthTypeUser          = user.AuthTypeUser
+	AuthTypeLinkShare int = 2
 )
 
 // Token represents an authentication token
@@ -54,45 +56,51 @@ type Token struct {
 
 const RefreshTokenCookieName = "vikunja_refresh_token" //nolint:gosec // not a credential
 
-// getRefreshTokenCookiePath returns the cookie path for the refresh token,
-// derived from service.publicurl.
-func getRefreshTokenCookiePath() string {
-	refreshURL := "/api/v1/user/token/refresh"
+const (
+	RefreshTokenPathV1 = "/api/v1/user/token/refresh" //nolint:gosec // a route path, not a credential
+	RefreshTokenPathV2 = "/api/v2/user/token/refresh" //nolint:gosec // a route path, not a credential
+)
 
-	publicURL := config.ServicePublicURL.GetString()
-	u, err := url.Parse(publicURL)
-	if err != nil {
-		return refreshURL
+// getRefreshTokenCookiePaths prefixes each refresh endpoint with the base
+// path from service.publicurl.
+func getRefreshTokenCookiePaths() []string {
+	basePath := ""
+	if u, err := url.Parse(config.ServicePublicURL.GetString()); err == nil {
+		basePath = strings.TrimRight(u.Path, "/")
 	}
 
-	// Extract the path component and append the refresh endpoint
-	basePath := strings.TrimRight(u.Path, "/")
-	return basePath + refreshURL
+	refreshTokenPaths := []string{RefreshTokenPathV1, RefreshTokenPathV2}
+	paths := make([]string, len(refreshTokenPaths))
+	for i, p := range refreshTokenPaths {
+		paths[i] = basePath + p
+	}
+	return paths
 }
 
-// SetRefreshTokenCookie sets an HttpOnly cookie containing the refresh token.
-// The cookie is path-scoped to the refresh endpoint so the browser only sends
-// it on refresh requests. HttpOnly prevents JavaScript access (XSS protection).
+// SetRefreshTokenCookie sets one HttpOnly cookie per refresh endpoint (v1, v2),
+// path-scoped so the browser only sends it on refresh requests. A single
+// cookie at Path=/api would ship the long-lived token on every API request.
+// Browsers match cookie paths by prefix, so each endpoint needs its own.
 func SetRefreshTokenCookie(c *echo.Context, token string, maxAge int) {
 	secure := strings.HasPrefix(config.ServicePublicURL.GetString(), "https")
-	// SameSite=None allows cross-origin sending (needed for the Electron
-	// desktop app where the page is on localhost but the API is remote),
-	// however browsers require Secure=true for SameSite=None cookies.
-	// When running over plain HTTP (e.g. local dev or E2E tests), fall
-	// back to Lax so the cookie is still accepted by the browser.
+	// SameSite=None so the cookie survives split-origin deployments where the
+	// frontend and API are on different hosts, but browsers only accept that
+	// with Secure=true; fall back to Lax on plain HTTP (local dev, E2E tests).
 	sameSite := http.SameSiteLaxMode
 	if secure {
 		sameSite = http.SameSiteNoneMode
 	}
-	c.SetCookie(&http.Cookie{ //nolint:gosec // G124: Secure/SameSite are intentionally conditional on the https scheme (see above); HttpOnly is always set.
-		Name:     RefreshTokenCookieName,
-		Value:    token,
-		Path:     getRefreshTokenCookiePath(),
-		MaxAge:   maxAge,
-		HttpOnly: true,
-		Secure:   secure,
-		SameSite: sameSite,
-	})
+	for _, path := range getRefreshTokenCookiePaths() {
+		c.SetCookie(&http.Cookie{ //nolint:gosec // G124: Secure/SameSite are intentionally conditional on the https scheme (see above); HttpOnly is always set.
+			Name:     RefreshTokenCookieName,
+			Value:    token,
+			Path:     path,
+			MaxAge:   maxAge,
+			HttpOnly: true,
+			Secure:   secure,
+			SameSite: sameSite,
+		})
+	}
 }
 
 // ClearRefreshTokenCookie removes the refresh token cookie.
@@ -216,8 +224,21 @@ func NewLinkShareJWTAuthtoken(share *models.LinkSharing) (token string, err erro
 	return t.SignedString([]byte(config.ServiceSecret.GetString()))
 }
 
+// HasAuthInContext reports whether the request carries credentials at all.
+func HasAuthInContext(c *echo.Context) bool {
+	if c.Get("api_token") != nil {
+		return true
+	}
+	_, is := c.Get("user").(*jwt.Token)
+	return is
+}
+
 // GetAuthFromClaims returns a web.Auth object from jwt claims
 func GetAuthFromClaims(c *echo.Context) (a web.Auth, err error) {
+	// The token middleware already loaded the owner; a lookup per call showed up as two extra transactions per request.
+	if u, ok := c.Get("api_user").(*user.User); ok {
+		return u, nil
+	}
 	// check if we have a token in context and use it if that's the case
 	if c.Get("api_token") != nil {
 		apiToken := c.Get("api_token").(*models.APIToken)
@@ -255,7 +276,7 @@ func GetAuthFromClaims(c *echo.Context) (a web.Auth, err error) {
 // and returns the token and its owner. This is the shared validation logic used
 // by both the HTTP middleware and WebSocket auth.
 func ValidateAPITokenString(tokenString string) (*models.APIToken, *user.User, error) {
-	s := db.NewSession()
+	s := db.NewReadSession()
 	defer s.Close()
 
 	token, err := models.GetTokenFromTokenString(s, tokenString)
@@ -355,7 +376,7 @@ func RefreshSession(rawRefreshToken string) (*RefreshResult, error) {
 	if err != nil {
 		_ = s.Rollback()
 		if models.IsErrSessionNotFound(err) {
-			return nil, echo.NewHTTPError(http.StatusUnauthorized, "Invalid or expired refresh token.")
+			return nil, &models.ErrInvalidRefreshToken{}
 		}
 		return nil, err
 	}
@@ -372,7 +393,7 @@ func RefreshSession(rawRefreshToken string) (*RefreshResult, error) {
 		if err := s.Commit(); err != nil {
 			return nil, err
 		}
-		return nil, echo.NewHTTPError(http.StatusUnauthorized, "Session expired.")
+		return nil, &models.ErrSessionExpired{}
 	}
 
 	if err := models.UpdateSessionLastActive(s, session.ID); err != nil {
@@ -384,7 +405,7 @@ func RefreshSession(rawRefreshToken string) (*RefreshResult, error) {
 	if err != nil {
 		_ = s.Rollback()
 		if models.IsErrSessionNotFound(err) {
-			return nil, echo.NewHTTPError(http.StatusUnauthorized, "Refresh token already used.")
+			return nil, &models.ErrRefreshTokenAlreadyUsed{}
 		}
 		return nil, err
 	}
@@ -424,6 +445,14 @@ func RefreshSession(rawRefreshToken string) (*RefreshResult, error) {
 	}, nil
 }
 
+// IsUnusableRefreshToken reports whether the caller should clear the refresh
+// cookie. Transient errors must not clear it, nor a token rotated away by a
+// concurrent refresh: that would delete the cookie the winning refresh just set.
+func IsUnusableRefreshToken(err error) bool {
+	var expired *models.ErrSessionExpired
+	return errors.As(err, &expired) || user.IsErrUserStatusError(err)
+}
+
 // SessionIDFromContext reads the session id (the `sid` claim) off the user JWT
 // in the echo context. It returns "" when there is no user JWT or no sid claim
 // (API tokens and link shares carry no session), which callers treat as a no-op.
@@ -449,8 +478,8 @@ func SessionIDFromContext(c *echo.Context) string {
 // humabridge group middleware stashes the *echo.Context under EchoContextKey
 // first.
 func GetAuthFromContext(ctx context.Context) (web.Auth, error) {
-	ec, ok := ctx.Value(humabridge.EchoContextKey).(*echo.Context)
-	if !ok {
+	ec := humabridge.EchoContextFrom(ctx)
+	if ec == nil {
 		return nil, fmt.Errorf("no echo.Context on request context; are you calling GetAuthFromContext from a Huma handler mounted via humabridge?")
 	}
 	return GetAuthFromClaims(ec)

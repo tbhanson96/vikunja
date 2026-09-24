@@ -8,7 +8,7 @@ const searchResults = [
 	{title: 'Beta'},
 ]
 
-function mountMultiselect() {
+function mountMultiselect(props: Record<string, unknown> = {}) {
 	return mount(Multiselect, {
 		attachTo: document.body,
 		props: {
@@ -19,6 +19,7 @@ function mountMultiselect() {
 			placeholder: 'Type to search',
 			createPlaceholder: 'create',
 			selectPlaceholder: 'select',
+			...props,
 		},
 		global: {
 			mocks: {$t: (key: string) => key},
@@ -117,6 +118,153 @@ describe('Multiselect.vue — combobox Escape semantics', () => {
 		expect(ancestorListener).toHaveBeenCalledTimes(1)
 
 		document.removeEventListener('keydown', ancestorListener)
+		wrapper.unmount()
+	})
+})
+
+describe('Multiselect.vue — focus after selecting', () => {
+	beforeEach(() => {
+		vi.useFakeTimers()
+	})
+
+	afterEach(() => {
+		vi.useRealTimers()
+		document.body.innerHTML = ''
+	})
+
+	// Browsers fire a click when Enter is pressed on a focused button.
+	function activate(el: Element) {
+		el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}))
+	}
+
+	it('keeps focus in the input after selecting an option with Enter', async () => {
+		const wrapper = mountMultiselect()
+		const input = await openResults(wrapper)
+
+		const option = wrapper.find('[role="option"]').element as HTMLElement
+		option.focus()
+
+		activate(option)
+		await nextTick()
+
+		expect(wrapper.emitted('select')).toHaveLength(1)
+		expect(document.activeElement).toBe(input.element)
+
+		// The refocus must not reopen the list either.
+		vi.advanceTimersByTime(300)
+		await nextTick()
+		expect(wrapper.find('[role="listbox"]').exists()).toBe(false)
+
+		wrapper.unmount()
+	})
+
+	it('does not select twice from the keyup of the Enter that selected an option', async () => {
+		const wrapper = mountMultiselect({searchResults: [{title: 'Alpha'}]})
+		const input = await openResults(wrapper)
+
+		const option = wrapper.find('[role="option"]').element as HTMLElement
+		option.focus()
+		activate(option)
+		await nextTick()
+
+		// Enter was pressed while the option had focus, so its keyup arrives at the input.
+		await input.trigger('keyup', {key: 'Enter'})
+		vi.advanceTimersByTime(300)
+		await nextTick()
+
+		expect(wrapper.emitted('select')).toHaveLength(1)
+		// Only the search from typing, none from the trailing keyup.
+		expect(wrapper.emitted('search')).toHaveLength(1)
+
+		wrapper.unmount()
+	})
+
+	it('searches again on the next keystroke after a selection', async () => {
+		const wrapper = mountMultiselect()
+		const input = await openResults(wrapper)
+
+		const option = wrapper.find('[role="option"]').element as HTMLElement
+		option.focus()
+		activate(option)
+		await nextTick()
+		await input.trigger('keyup', {key: 'Enter'})
+
+		await input.setValue('b')
+		await input.trigger('keydown', {key: 'b'})
+		await input.trigger('keyup', {key: 'b'})
+		vi.advanceTimersByTime(300)
+		await nextTick()
+
+		const searchEvents = wrapper.emitted('search') ?? []
+		expect(searchEvents[searchEvents.length - 1]).toEqual(['b'])
+
+		wrapper.unmount()
+	})
+})
+
+describe('Multiselect.vue — multiple value stays an array', () => {
+	beforeEach(() => {
+		vi.useFakeTimers()
+	})
+
+	afterEach(() => {
+		vi.useRealTimers()
+		document.body.innerHTML = ''
+	})
+
+	function lastModelValue(wrapper: VueWrapper) {
+		const events = wrapper.emitted('update:modelValue') ?? []
+		return events[events.length - 1]?.[0]
+	}
+
+	// FRONTEND-OSS-2KA: the parent creates the item asynchronously, so a result can be clicked before modelValue syncs back.
+	it('selects an option while a created item is still pending in the parent', async () => {
+		const wrapper = mountMultiselect({creatable: true, searchResults: [{title: 'Alpha'}]})
+		const input = wrapper.find('input[role="combobox"]')
+		await input.setValue('New')
+		await input.trigger('keyup')
+		vi.advanceTimersByTime(300)
+		await nextTick()
+
+		await wrapper.find('.is-create-option').trigger('click')
+		expect(wrapper.emitted('create')).toEqual([['New']])
+
+		// A real keystroke's keydown clears the keyup guard set by refocusing after create.
+		await input.setValue('a')
+		await input.trigger('keydown', {key: 'a'})
+		await input.trigger('keyup', {key: 'a'})
+		vi.advanceTimersByTime(300)
+		await nextTick()
+		await wrapper.find('[role="option"]').trigger('click')
+
+		expect(wrapper.emitted('select')).toEqual([[{title: 'Alpha'}]])
+		expect(lastModelValue(wrapper)).toEqual([{title: 'Alpha'}])
+
+		wrapper.unmount()
+	})
+
+	it('selects two options in a row before modelValue syncs back', async () => {
+		const wrapper = mountMultiselect()
+		await openResults(wrapper)
+
+		const [alpha, beta] = wrapper.findAll('[role="option"]').map(o => o.element)
+		alpha.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}))
+		beta.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}))
+		await nextTick()
+
+		expect(wrapper.emitted('select')).toHaveLength(2)
+		expect(lastModelValue(wrapper)).toEqual([{title: 'Alpha'}, {title: 'Beta'}])
+
+		wrapper.unmount()
+	})
+
+	it('treats a null modelValue as no selection', async () => {
+		const wrapper = mountMultiselect({modelValue: null})
+		await openResults(wrapper)
+		await wrapper.find('[role="option"]').trigger('click')
+
+		expect(lastModelValue(wrapper)).toEqual([{title: 'Alpha'}])
+
 		wrapper.unmount()
 	})
 })

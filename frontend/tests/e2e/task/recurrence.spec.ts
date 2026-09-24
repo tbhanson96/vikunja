@@ -7,24 +7,24 @@ test.describe('Task recurrence', () => {
 		await ProjectFactory.create(1, {id: 1})
 	})
 
-	test('sets repeat-every-day via preset button', async ({authenticatedPage: page}) => {
+	test('sets repeat-every-day via preset button', async ({authenticatedPage: page, apiContext, userToken}) => {
 		const [task] = await TaskFactory.create(1, {
 			id: 1,
 			project_id: 1,
 			due_date: new Date(Date.now() + 86_400_000).toISOString(),
 		}, false)
-		await page.goto(`/tasks/${task.id}/edit`)
+		await page.goto(`/tasks/${task.id}`)
 
 		// Reveal the RepeatAfter component (hidden until the user activates it)
 		await page.getByRole('button', {name: 'Set Repeating Interval'}).click()
 
 		const save = page.waitForResponse(r =>
-			r.url().includes(`/tasks/${task.id}`) && r.request().method() === 'POST',
+			new URL(r.url()).pathname.endsWith(`/tasks/${task.id}`) && r.request().method() === 'PATCH',
 		)
 		await page.getByRole('button', {name: 'Every Day'}).click()
-		const r = await save
-		const body = r.request().postDataJSON()
-		expect(body.repeat_after).toBe(86400)
+		expect((await save).ok()).toBeTruthy()
+		const response = await apiContext.get(`/api/v2/tasks/${task.id}`, {headers: {Authorization: `Bearer ${userToken}`}})
+		expect((await response.json()).repeat_after).toBe(86400)
 	})
 
 	test('completing a recurring task reopens with advanced due date', async ({
@@ -38,10 +38,10 @@ test.describe('Task recurrence', () => {
 			repeat_after: 86400,
 		}, false)
 
-		await page.goto(`/tasks/${task.id}/edit`)
+		await page.goto(`/tasks/${task.id}`)
 
 		const completed = page.waitForResponse(r =>
-			r.url().includes(`/tasks/${task.id}`) && r.request().method() === 'POST',
+			new URL(r.url()).pathname.endsWith(`/tasks/${task.id}`) && r.request().method() === 'PATCH',
 		)
 		await page.locator('.task-view .action-buttons .button').filter({hasText: 'Mark task done!'}).click()
 		await completed
@@ -63,7 +63,7 @@ test.describe('Task recurrence', () => {
 
 	test('monthly repeat mode hides the amount field', async ({authenticatedPage: page}) => {
 		const [task] = await TaskFactory.create(1, {id: 1, project_id: 1}, false)
-		await page.goto(`/tasks/${task.id}/edit`)
+		await page.goto(`/tasks/${task.id}`)
 
 		// Reveal the RepeatAfter component (hidden until the user activates it)
 		await page.getByRole('button', {name: 'Set Repeating Interval'}).click()

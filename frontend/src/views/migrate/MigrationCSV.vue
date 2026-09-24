@@ -108,10 +108,10 @@
 						<div class="column-name">
 							<strong>{{ mapping.column_name }}</strong>
 							<span
-								v-if="detectionResult && detectionResult.preview_rows[0]"
+								v-if="previewRow"
 								class="preview-value"
 							>
-								{{ $t('migrate.csv.example') }}: {{ detectionResult.preview_rows[0][index] || '-' }}
+								{{ $t('migrate.csv.example') }}: {{ previewRow[index] || '-' }}
 							</span>
 						</div>
 						<div class="select is-fullwidth">
@@ -178,8 +178,23 @@
 			v-else-if="step === 'success'"
 			class="success-step"
 		>
-			<Message class="mbe-4">
-				{{ successMessage }}
+			<Message
+				ref="resultMessage"
+				:variant="migrationStore.hasFailed ? 'danger' : 'info'"
+				role="status"
+				aria-live="polite"
+				tabindex="-1"
+				class="mbe-4"
+			>
+				<template v-if="migrationStore.hasFailed">
+					{{ $t(migrationStore.failureKey, {service: 'CSV', reason: migrationStore.errorMessage}) }}
+				</template>
+				<template v-else-if="migrationStore.isFinished">
+					{{ $t('migrate.migrationFinished', {service: 'CSV'}) }}
+				</template>
+				<template v-else>
+					{{ $t('migrate.migrationStartedWillReciveEmail', {service: 'CSV'}) }}
+				</template>
 			</Message>
 			<XButton :to="{name: 'home'}">
 				{{ $t('home.goToOverview') }}
@@ -189,12 +204,12 @@
 </template>
 
 <script setup lang="ts">
-import {computed, ref, shallowReactive} from 'vue'
+import {computed, nextTick, ref, shallowReactive, watch} from 'vue'
 import {useI18n} from 'vue-i18n'
 
 import Message from '@/components/misc/Message.vue'
 import SingleTaskInProject from '@/components/tasks/partials/SingleTaskInProject.vue'
-import TaskModel from '@/models/task'
+import {createTaskDraft} from '@/helpers/task'
 
 import CSVMigrationService, {
 	type DetectionResult,
@@ -206,8 +221,9 @@ import CSVMigrationService, {
 } from '@/services/migrator/csvMigration'
 
 import {useTitle} from '@/composables/useTitle'
-import {useProjectStore} from '@/stores/projects'
+import {useMigrationStore} from '@/stores/migration'
 import {getErrorText} from '@/message'
+import {CSV_ATTRIBUTE_LABEL_KEYS} from './csvAttributeLabels'
 
 type Step = 'upload' | 'mapping' | 'success'
 
@@ -217,14 +233,25 @@ useTitle(() => t('migrate.titleService', {name: 'CSV'}))
 
 const csvService = shallowReactive(new CSVMigrationService())
 
+const migrationStore = useMigrationStore()
+
 const step = ref<Step>('upload')
 const error = ref('')
-const successMessage = ref('')
 const isLoading = ref(false)
 const uploadInput = ref<HTMLInputElement | null>(null)
 const selectedFile = ref<File | null>(null)
 const detectionResult = ref<DetectionResult | null>(null)
 const previewResult = ref<PreviewResult | null>(null)
+const resultMessage = ref<InstanceType<typeof Message> | null>(null)
+
+// the triggering button unmounts when the step switches, so move focus to the result message
+watch(step, async (newStep) => {
+	if (newStep !== 'success') {
+		return
+	}
+	await nextTick()
+	resultMessage.value?.$el?.focus()
+})
 
 const config = ref<ImportConfig>({
 	delimiter: ',',
@@ -236,18 +263,20 @@ const config = ref<ImportConfig>({
 
 const previewTasks = computed(() => {
 	if (!previewResult.value) return []
-	return previewResult.value.tasks.map((pt, i) => new TaskModel({
+	return previewResult.value.tasks.map((pt, i) => createTaskDraft({
 		id: -(i + 1),
 		title: pt.title || t('migrate.csv.untitled'),
 		description: pt.description || '',
 		done: pt.done,
-		dueDate: pt.due_date || null,
-		startDate: pt.start_date || null,
-		endDate: pt.end_date || null,
+		due_date: pt.due_date || undefined,
+		start_date: pt.start_date || undefined,
+		end_date: pt.end_date || undefined,
 		priority: pt.priority,
 		labels: (pt.labels || []).map((l, li) => ({id: -(li + 1), title: l})),
 	}))
 })
+
+const previewRow = computed(() => detectionResult.value?.preview_rows?.[0] ?? null)
 
 const hasValidMapping = computed(() => {
 	if (!config.value.mapping.length) return false
@@ -255,22 +284,8 @@ const hasValidMapping = computed(() => {
 	return config.value.mapping.some(m => m.attribute === 'title')
 })
 
-// Map snake_case attribute names to translation keys
 function getAttributeLabel(attribute: string): string {
-	const attributeMap: Record<string, string> = {
-		title: 'task.attributes.title',
-		description: 'task.attributes.description',
-		due_date: 'task.attributes.dueDate',
-		start_date: 'task.attributes.startDate',
-		end_date: 'task.attributes.endDate',
-		done: 'task.attributes.done',
-		priority: 'task.attributes.priority',
-		labels: 'task.attributes.labels',
-		reminder: 'task.attributes.reminders',
-		project: 'task.attributes.project',
-		ignore: 'migrate.csv.ignore',
-	}
-	return t(attributeMap[attribute] || attribute)
+	return t(CSV_ATTRIBUTE_LABEL_KEYS[attribute] || attribute)
 }
 
 function getDelimiterLabel(delimiter: string): string {
@@ -351,13 +366,8 @@ async function performImport() {
 	error.value = ''
 
 	try {
-		const result = await csvService.migrate(selectedFile.value, config.value)
-		successMessage.value = result.message
-
-		// Reload projects
-		const projectStore = useProjectStore()
-		await projectStore.loadAllProjects()
-
+		await csvService.migrate(selectedFile.value, config.value)
+		migrationStore.start(csvService)
 		step.value = 'success'
 	} catch (e) {
 		error.value = getErrorText(e)

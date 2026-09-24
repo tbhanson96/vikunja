@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"code.vikunja.io/api/pkg/db"
 	"code.vikunja.io/api/pkg/utils"
@@ -478,6 +479,49 @@ func TestUpdateUser(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, IsErrUserDoesNotExist(err))
 	})
+	t.Run("pending email survives an update without email change", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		_, err := s.Where("id = ?", 1).Cols("pending_email").Update(&User{PendingEmail: "p@example.com"})
+		require.NoError(t, err)
+
+		_, err = UpdateUser(s, &User{
+			ID:   1,
+			Name: "Lorem Ipsum",
+		}, false)
+		require.NoError(t, err)
+
+		updated, err := GetUserWithEmail(s, &User{ID: 1})
+		require.NoError(t, err)
+		assert.Equal(t, "p@example.com", updated.PendingEmail)
+	})
+	t.Run("direct email change discards the pending one", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		_, err := s.Where("id = ?", 1).Cols("pending_email").Update(&User{PendingEmail: "p@example.com"})
+		require.NoError(t, err)
+		_, err = generateToken(s, &User{ID: 1}, TokenEmailConfirm)
+		require.NoError(t, err)
+
+		_, err = UpdateUser(s, &User{
+			ID:    1,
+			Email: "testing@example.com",
+		}, false)
+		require.NoError(t, err)
+
+		updated, err := GetUserWithEmail(s, &User{ID: 1})
+		require.NoError(t, err)
+		assert.Equal(t, "testing@example.com", updated.Email)
+		assert.Empty(t, updated.PendingEmail)
+
+		tokens, err := getTokensForKind(s, &User{ID: 1}, TokenEmailConfirm)
+		require.NoError(t, err)
+		assert.Empty(t, tokens)
+	})
 	t.Run("frontend settings survive profile-only update", func(t *testing.T) {
 		db.LoadAndAssertFixtures(t)
 		s := db.NewSession()
@@ -754,6 +798,31 @@ func TestCleanupOldTokens(t *testing.T) {
 			"kind":  TokenPasswordReset,
 		}, false)
 	})
+	t.Run("deletes old email confirm tokens only with a pending email change", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		_, err := s.Where("id = ?", 1).Cols("pending_email").Update(&User{PendingEmail: "p@example.com"})
+		require.NoError(t, err)
+
+		withPending, err := generateToken(s, &User{ID: 1}, TokenEmailConfirm)
+		require.NoError(t, err)
+		withoutPending, err := generateToken(s, &User{ID: 2}, TokenEmailConfirm)
+		require.NoError(t, err)
+
+		_, err = s.In("id", withPending.ID, withoutPending.ID).
+			Cols("created").
+			Update(&Token{Created: time.Now().Add(-25 * time.Hour)})
+		require.NoError(t, err)
+
+		_, err = CleanupOldTokens(s)
+		require.NoError(t, err)
+		require.NoError(t, s.Commit())
+
+		db.AssertMissing(t, "user_tokens", map[string]interface{}{"id": withPending.ID})
+		db.AssertExists(t, "user_tokens", map[string]interface{}{"id": withoutPending.ID}, false)
+	})
 	t.Run("does not delete email confirm tokens", func(t *testing.T) {
 		db.LoadAndAssertFixtures(t)
 		s := db.NewSession()
@@ -862,4 +931,52 @@ func TestGetUserByID_ActiveUser(t *testing.T) {
 	u, err := GetUserByID(s, 1)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), u.ID)
+}
+
+func TestGetUserByID_AfterBatchLoadKeepsStatusCheck(t *testing.T) {
+	db.LoadAndAssertFixtures(t)
+	t.Cleanup(func() { db.LoadAndAssertFixtures(t) })
+	s := db.NewSession()
+	defer s.Close()
+	// Commit so the second session's write below is visible; a commit does not dirty the memo.
+	require.NoError(t, s.Commit())
+
+	batch, err := GetUsersByIDs(s, []int64{17, 18, 1})
+	require.NoError(t, err)
+	require.Len(t, batch, 3)
+	assert.Empty(t, batch[17].Email)
+	assert.Empty(t, batch[18].Email)
+
+	disabled, err := GetUserByID(s, 17)
+	require.True(t, IsErrAccountDisabled(err))
+	require.NotNil(t, disabled)
+	assert.Equal(t, int64(17), disabled.ID)
+	assert.Empty(t, disabled.Email)
+
+	locked, err := GetUserByID(s, 18)
+	require.True(t, IsErrAccountLocked(err))
+	require.NotNil(t, locked)
+	assert.Equal(t, int64(18), locked.ID)
+
+	s2 := db.NewSession()
+	defer s2.Close()
+	_, err = s2.ID(1).Cols("username").Update(&User{Username: "behind the back"})
+	require.NoError(t, err)
+	require.NoError(t, s2.Commit())
+
+	first, err := GetUserByID(s, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "user1", first.Username, "a re-read that reaches the db would see the other session's write")
+	first.Username = "mutated"
+
+	second, err := GetUserByID(s, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "user1", second.Username)
+
+	_, err = s.ID(2).Cols("name").Update(&User{Name: "any write invalidates the memo"})
+	require.NoError(t, err)
+
+	afterWrite, err := GetUserByID(s, 1)
+	require.NoError(t, err)
+	assert.Equal(t, "behind the back", afterWrite.Username)
 }

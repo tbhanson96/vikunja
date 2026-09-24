@@ -64,7 +64,7 @@
 				</Modal>
 
 				<BaseButton
-					v-shortcut="'Shift+Slash'"
+					v-shortcut="SHORTCUTS.showKeyboardShortcuts"
 					class="keyboard-shortcuts-button d-print-none"
 					@click="showKeyboardShortcuts()"
 				>
@@ -80,18 +80,18 @@
 import {watch, computed, onBeforeUnmount} from 'vue'
 import {useRoute, useRouter} from 'vue-router'
 
+import {SHORTCUTS} from '@/constants/shortcuts'
 import Navigation from '@/components/home/Navigation.vue'
 import QuickActions from '@/components/quick-actions/QuickActions.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 
 import {useBaseStore} from '@/stores/base'
-import {useLabelStore} from '@/stores/labels'
-import {useProjectStore} from '@/stores/projects'
 
 import {useRouteWithModal} from '@/composables/useRouteWithModal'
 import {useRenewTokenOnFocus} from '@/composables/useRenewTokenOnFocus'
 import {useSidebarResize} from '@/composables/useSidebarResize'
 import {useWebSocket} from '@/composables/useWebSocket'
+import {useServerCacheEvents} from '@/composables/useServerCacheEvents'
 import {useAuthStore} from '@/stores/auth'
 
 const authStore = useAuthStore()
@@ -134,7 +134,7 @@ watch(() => route.name as string, (routeName) => {
 			routeName.startsWith('user.settings')
 		)
 	) {
-		baseStore.handleSetCurrentProject({project: null})
+		baseStore.setCurrentProject(null)
 	}
 })
 
@@ -142,14 +142,9 @@ watch(() => route.name as string, (routeName) => {
 
 useRenewTokenOnFocus()
 
+useServerCacheEvents()
 const {connect} = useWebSocket()
 connect()
-
-const labelStore = useLabelStore()
-labelStore.loadAllLabels()
-
-const projectStore = useProjectStore()
-projectStore.loadAllProjects()
 
 // Listen for task creation from the quick-entry window
 const taskUpdateChannel = new BroadcastChannel('vikunja-task-updates')

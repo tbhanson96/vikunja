@@ -17,14 +17,18 @@
 package models
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"code.vikunja.io/api/pkg/config"
+	"code.vikunja.io/api/pkg/db"
 	"code.vikunja.io/api/pkg/events"
 	"code.vikunja.io/api/pkg/files"
 	"code.vikunja.io/api/pkg/log"
@@ -38,6 +42,7 @@ import (
 	"github.com/jinzhu/copier"
 	"xorm.io/builder"
 	"xorm.io/xorm"
+	"xorm.io/xorm/schemas"
 )
 
 type TaskRepeatMode int
@@ -60,6 +65,15 @@ func validateRepeatAfter(repeatAfter int64) error {
 	return nil
 }
 
+// validateTaskForCreation holds the model-level rules; the `valid:` tags are enforced at the API boundary only, sparing internal callers which just copy data.
+func validateTaskForCreation(t *Task) error {
+	if t.Title == "" {
+		return ErrTaskCannotBeEmpty{}
+	}
+
+	return validateRepeatAfter(t.RepeatAfter)
+}
+
 // Task represents a task in a project
 type Task struct {
 	// The unique, numeric id of this task.
@@ -68,22 +82,21 @@ type Task struct {
 	Title string `xorm:"TEXT not null" json:"title" valid:"minstringlength(1)" minLength:"1" doc:"The task title. This is what you'll see in the project."`
 	// The task description.
 	Description string `xorm:"longtext null" json:"description"`
+	// The project this task belongs to.
+	// Must precede done/due_date: xorm orders composite index columns by struct field order.
+	ProjectID int64 `xorm:"bigint INDEX not null unique(tasks_project_index) index(project_done_due_date)" json:"project_id" param:"project" doc:"The id of the project this task belongs to. On create it is taken from the URL; on update, setting it to a different project moves the task (requires write access to the target project)."`
 	// Whether a task is done or not.
-	Done bool `xorm:"INDEX null" json:"done"`
+	Done bool `xorm:"INDEX null index(project_done_due_date)" json:"done"`
 	// The time when a task was marked as done. This field is system-controlled and cannot be set via API.
 	DoneAt time.Time `xorm:"INDEX null 'done_at'" json:"done_at" readOnly:"true" doc:"When the task was marked as done. Set by the server; ignored on write."`
 	// The time when the task is due.
-	DueDate time.Time `xorm:"DATETIME INDEX null 'due_date'" json:"due_date"`
+	DueDate time.Time `xorm:"DATETIME INDEX null index(project_done_due_date) 'due_date'" json:"due_date"`
 	// An array of reminders that are associated with this task.
 	Reminders []*TaskReminder `xorm:"-" json:"reminders"`
-	// The project this task belongs to.
-	ProjectID int64 `xorm:"bigint INDEX not null unique(tasks_project_index)" json:"project_id" param:"project" doc:"The id of the project this task belongs to. On create it is taken from the URL; on update, setting it to a different project moves the task (requires write access to the target project)."`
 	// An amount in seconds this task repeats itself. If this is set, when marking the task as done, it will mark itself as "undone" and then increase all remindes and the due date by its amount.
 	RepeatAfter int64 `xorm:"bigint INDEX null" json:"repeat_after" valid:"range(0|9223372036854775807)" doc:"The interval in seconds this task repeats. When set, marking the task done re-opens it and bumps its reminders and due date by this amount."`
 	// Can have three possible values which will trigger when the task is marked as done: 0 = repeats after the amount specified in repeat_after, 1 = repeats all dates each months (ignoring repeat_after), 3 = repeats from the current date rather than the last set date.
 	RepeatMode TaskRepeatMode `xorm:"not null default 0" json:"repeat_mode" doc:"How the task repeats when marked done: 0 = after repeat_after seconds, 1 = monthly (ignores repeat_after), 2 = from the current date rather than the last set date."`
-	// When enabled for a recurring task, marking it done keeps the current task closed and creates a new open task for the next occurrence.
-	RepeatAsNew bool `xorm:"not null default false" json:"repeat_as_new,omitempty" doc:"When enabled for a recurring task, marking it done closes the current occurrence and creates a new open task for the next occurrence instead of re-opening the same task."`
 	// The task priority. Can be anything you want, it is possible to sort by this later.
 	Priority int64 `xorm:"bigint null" json:"priority"`
 	// When this task starts.
@@ -369,13 +382,25 @@ func getTasksForProjects(s *xorm.Session, projects []*Project, a web.Auth, opts 
 	return tasks, resultCount, totalItems, err
 }
 
+func taskMemoKey(id int64) string { return "task-" + strconv.FormatInt(id, 10) }
+
+// lockingSession adds a row lock to the next read. xorm rejects FOR UPDATE on SQLite, which serializes writers anyway.
+func lockingSession(s *xorm.Session) *xorm.Session {
+	if dbType := db.Type(); dbType == schemas.MYSQL || dbType == schemas.POSTGRES {
+		return s.ForUpdate()
+	}
+	return s
+}
+
 // GetTaskByIDSimple returns a raw task without extra data by the task ID
 func GetTaskByIDSimple(s *xorm.Session, taskID int64) (task Task, err error) {
 	if taskID < 1 {
 		return Task{}, ErrTaskDoesNotExist{taskID}
 	}
 
-	return GetTaskSimple(s, &Task{ID: taskID})
+	return db.Remember(s, taskMemoKey(taskID), func() (Task, error) {
+		return GetTaskSimple(s, &Task{ID: taskID})
+	})
 }
 
 // GetTaskByProjectAndIndex returns a task by its per-project index.
@@ -448,9 +473,13 @@ func GetTaskSimpleByUUID(s *xorm.Session, uid string) (task *Task, err error) {
 // task whose project the provided auth does not have access to.
 func GetTasksByUIDs(s *xorm.Session, uids []string, a web.Auth) (tasks []*Task, err error) {
 	tasks = []*Task{}
+	accessible, err := accessibleProjectIDsCond(s, a, "`tasks`.`project_id`")
+	if err != nil {
+		return nil, err
+	}
 	err = s.
 		In("uid", uids).
-		And(accessibleProjectIDsSubquery(a, "`tasks`.`project_id`")).
+		And(accessible).
 		Find(&tasks)
 	if err != nil {
 		return
@@ -529,10 +558,7 @@ func addAssigneesToTasks(s *xorm.Session, taskIDs []int64, taskMap map[int64]*Ta
 
 // Get all labels for all the tasks
 func addLabelsToTasks(s *xorm.Session, taskIDs []int64, taskMap map[int64]*Task) (err error) {
-	labels, _, _, err := GetLabelsByTaskIDs(s, &LabelByTaskIDsOptions{
-		TaskIDs: taskIDs,
-		Page:    -1,
-	})
+	labels, _, _, err := GetLabelsByTaskIDs(s, taskIDs, nil, -1)
 	if err != nil {
 		return
 	}
@@ -591,9 +617,13 @@ func addRelatedTasksToTasks(s *xorm.Session, taskIDs []int64, taskMap map[int64]
 		return
 	}
 
+	accessible, err := accessibleProjectIDsCond(s, a, "`tasks`.`project_id`")
+	if err != nil {
+		return err
+	}
 	fullRelatedTasks := make(map[int64]*Task)
 	err = s.In("id", relatedTaskIDs).
-		And(accessibleProjectIDsSubquery(a, "`tasks`.`project_id`")).
+		And(accessible).
 		Find(&fullRelatedTasks)
 	if err != nil {
 		return
@@ -643,6 +673,10 @@ func addBucketsToTasks(s *xorm.Session, a web.Auth, taskIDs []int64, taskMap map
 		return err
 	}
 
+	accessible, err := accessibleProjectIDsCond(s, a, "project_views.project_id")
+	if err != nil {
+		return err
+	}
 	buckets := make(map[int64]*Bucket)
 	err = s.
 		Where(builder.In("id", builder.Select("bucket_id").
@@ -650,7 +684,7 @@ func addBucketsToTasks(s *xorm.Session, a web.Auth, taskIDs []int64, taskMap map
 			Where(builder.In("task_id", taskIDs)))).
 		And(builder.In("project_view_id", builder.Select("id").
 			From("project_views").
-			Where(accessibleProjectIDsSubquery(a, "project_views.project_id")))).
+			Where(accessible))).
 		Find(&buckets)
 	if err != nil {
 		return err
@@ -821,13 +855,8 @@ func addMoreInfoToTasks(s *xorm.Session, taskMap map[int64]*Task, a web.Auth, vi
 	return
 }
 
-// Checks if adding a new task would exceed the bucket limit
-func checkBucketLimit(s *xorm.Session, a web.Auth, t *Task, bucket *Bucket) (taskCount int64, err error) {
-	view, err := GetProjectViewByID(s, bucket.ProjectViewID)
-	if err != nil {
-		return 0, err
-	}
-
+// checkBucketLimit counts pendingInBatch tasks whose task_buckets rows aren't inserted yet, and returns taskCount even on overflow so callers can tell which task overflows.
+func checkBucketLimit(s *xorm.Session, a web.Auth, t *Task, bucket *Bucket, view *ProjectView, pendingInBatch int64) (taskCount int64, err error) {
 	if view.ProjectID < 0 || (view.Filter != nil && view.Filter.Filter != "") {
 		// For saved filters or views with a filter, the count must be scoped to
 		// this bucket *and* the filter: raw task_buckets rows can include tasks
@@ -854,8 +883,8 @@ func checkBucketLimit(s *xorm.Session, a web.Auth, t *Task, bucket *Bucket) (tas
 		}
 	}
 
-	if bucket.Limit > 0 && taskCount >= bucket.Limit {
-		return 0, ErrBucketLimitExceeded{TaskID: t.ID, BucketID: bucket.ID, Limit: bucket.Limit}
+	if bucket.Limit > 0 && taskCount+pendingInBatch >= bucket.Limit {
+		return taskCount, ErrBucketLimitExceeded{TaskID: t.ID, BucketID: bucket.ID, Limit: bucket.Limit}
 	}
 
 	return
@@ -869,42 +898,52 @@ func calculateDefaultPosition(entityID int64, position float64) float64 {
 	return position
 }
 
-func calculateNextTaskIndex(s *xorm.Session, projectID int64) (nextIndex int64, err error) {
-	latestTask := &Task{}
-	// Unscoped so an index is never reused while a soft-deleted task still holds it
-	_, err = s.
-		Unscoped().
-		Where("project_id = ?", projectID).
-		OrderBy("`index` desc").
-		Get(latestTask)
-	if err != nil {
-		return 0, err
+func setNewTaskIndexes(s *xorm.Session, projectID int64, tasks []*Task) error {
+	if len(tasks) == 0 {
+		return nil
 	}
 
-	return latestTask.Index + 1, nil
-}
-
-func setNewTaskIndex(s *xorm.Session, t *Task) (err error) {
-	// Check if an index was provided, otherwise calculate a new one
-	if t.Index == 0 {
-		t.Index, err = calculateNextTaskIndex(s, t.ProjectID)
-		return
-	}
-
-	// Check if the provided index is already taken, including by soft-deleted tasks
-	exists, err := s.Unscoped().Where("project_id = ? AND `index` = ?", t.ProjectID, t.Index).Exist(&Task{})
+	reserved := int64(len(tasks))
+	lastIndex, err := reserveTaskIndexes(s, projectID, reserved)
 	if err != nil {
 		return err
 	}
-	if exists {
-		// If the index is taken, calculate a new one
-		t.Index, err = calculateNextTaskIndex(s, t.ProjectID)
-		if err != nil {
-			return err
+	previous := lastIndex - reserved
+
+	// Presets above the old high water mark cannot collide with anything, everything else gets a fresh index.
+	used := make(map[int64]bool, len(tasks))
+	highest := lastIndex
+	for _, t := range tasks {
+		// Bounding imported presets keeps the counter far away from int64 overflow.
+		if t.Index <= previous || t.Index > math.MaxInt32 || used[t.Index] {
+			t.Index = 0
+			continue
+		}
+		used[t.Index] = true
+		if t.Index > highest {
+			highest = t.Index
 		}
 	}
 
-	return
+	next := previous
+	for _, t := range tasks {
+		if t.Index != 0 {
+			continue
+		}
+		next++
+		for used[next] {
+			next++
+		}
+		t.Index = next
+	}
+
+	if highest > lastIndex {
+		_, err = s.ID(projectID).
+			Cols("last_index").
+			Update(&ProjectTaskCounter{LastIndex: highest})
+	}
+
+	return err
 }
 
 // Create is the implementation to create a project task
@@ -926,20 +965,103 @@ func (t *Task) Create(s *xorm.Session, a web.Auth) (err error) {
 }
 
 func createTask(s *xorm.Session, t *Task, a web.Auth, updateAssignees bool, setBucket bool) (err error) {
+	return unwrapBulkCreateError(createTasks(s, t.ProjectID, []*Task{t}, a, updateAssignees, setBucket, false))
+}
 
-	t.ID = 0
+// CreateTasksForImport preserves preset indexes across the whole imported batch.
+func CreateTasksForImport(s *xorm.Session, projectID int64, tasks []*Task, a web.Auth) error {
+	return unwrapBulkCreateError(createTasks(s, projectID, tasks, a, true, true, true))
+}
 
-	// Check if we have at least a title
-	if t.Title == "" {
-		return ErrTaskCannotBeEmpty{}
+// unwrapBulkCreateError returns the raw error type callers of a single logical create expect, not the batch wrapper.
+func unwrapBulkCreateError(err error) error {
+	var berr ErrInvalidTaskInBulkCreation
+	if errors.As(err, &berr) {
+		return berr.Err
+	}
+	return err
+}
+
+// resolveProvidedBuckets maps task id → explicitly requested bucket, checking each bucket's limit once with the batch's own members added since their rows are inserted later.
+func resolveProvidedBuckets(s *xorm.Session, a web.Auth, projectID int64, tasks []*Task) (map[int64]*Bucket, error) {
+	bucketOrder := make([]int64, 0, len(tasks))
+	// bucket id → payload indexes of the tasks targeting it, in payload order.
+	batches := make(map[int64][]int)
+	for i, t := range tasks {
+		if t.BucketID == 0 {
+			continue
+		}
+		if _, has := batches[t.BucketID]; !has {
+			bucketOrder = append(bucketOrder, t.BucketID)
+		}
+		batches[t.BucketID] = append(batches[t.BucketID], i)
 	}
 
-	if err := validateRepeatAfter(t.RepeatAfter); err != nil {
-		return err
+	buckets := make(map[int64]*Bucket, len(bucketOrder))
+	for _, bucketID := range bucketOrder {
+		bucket, err := getBucketByID(s, bucketID)
+		if err != nil {
+			return nil, err
+		}
+
+		view, err := GetProjectViewByID(s, bucket.ProjectViewID)
+		if err != nil {
+			// Deleted views leave orphaned buckets behind; reporting the missing view would disclose they exist.
+			if IsErrProjectViewDoesNotExist(err) {
+				return nil, ErrBucketDoesNotExist{BucketID: bucketID}
+			}
+			return nil, err
+		}
+		if view.ProjectID != projectID {
+			return nil, ErrBucketDoesNotExist{BucketID: bucketID}
+		}
+
+		members := batches[bucketID]
+		existing, err := checkBucketLimit(s, a, tasks[members[0]], bucket, view, int64(len(members))-1)
+		if err != nil {
+			var limitErr ErrBucketLimitExceeded
+			if errors.As(err, &limitErr) {
+				// Name the first member which no longer fits, not the batch's first one.
+				overflowing := max(min(int(bucket.Limit-existing), len(members)-1), 0)
+				limitErr.TaskID = tasks[members[overflowing]].ID
+				return nil, ErrInvalidTaskInBulkCreation{Index: members[overflowing], Err: limitErr}
+			}
+			return nil, err
+		}
+		buckets[bucketID] = bucket
+	}
+
+	taskProvidedBucket := make(map[int64]*Bucket, len(tasks))
+	for _, t := range tasks {
+		if t.BucketID == 0 {
+			continue
+		}
+		taskProvidedBucket[t.ID] = buckets[t.BucketID]
+	}
+	return taskProvidedBucket, nil
+}
+
+// createTasks inserts row by row because multi-row inserts don't reliably return autoincrement ids on all supported databases.
+func createTasks(s *xorm.Session, projectID int64, tasks []*Task, a web.Auth, updateAssignees bool, setBucket, preserveIndexes bool) (err error) {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	for i, t := range tasks {
+		err = validateTaskForCreation(t)
+		if err != nil {
+			return ErrInvalidTaskInBulkCreation{Index: i, Err: err}
+		}
+
+		t.ProjectID = projectID
+		t.ID = 0
+		if !preserveIndexes {
+			t.Index = 0
+		}
 	}
 
 	// Check if the project exists
-	p, err := GetProjectSimpleByID(s, t.ProjectID)
+	p, err := GetProjectSimpleByID(s, projectID)
 	if err != nil {
 		return err
 	}
@@ -948,39 +1070,39 @@ func createTask(s *xorm.Session, t *Task, a web.Auth, updateAssignees bool, setB
 	if err != nil {
 		return err
 	}
-	t.CreatedByID = createdBy.ID
 
-	// Generate a uuid if we don't already have one
-	if t.UID == "" {
-		t.UID = uuid.NewString()
-	}
-
-	err = setNewTaskIndex(s, t)
+	err = setNewTaskIndexes(s, projectID, tasks)
 	if err != nil {
 		return err
 	}
 
-	t.HexColor = utils.NormalizeHex(t.HexColor)
+	for _, t := range tasks {
+		t.CreatedByID = createdBy.ID
 
-	_, err = s.Insert(t)
+		// Generate a uuid if we don't already have one
+		if t.UID == "" {
+			t.UID = uuid.NewString()
+		}
+
+		t.HexColor = utils.NormalizeHex(t.HexColor)
+
+		_, err = s.Insert(t)
+		if err != nil {
+			return err
+		}
+	}
+
+	taskProvidedBucket, err := resolveProvidedBuckets(s, a, projectID, tasks)
 	if err != nil {
 		return err
 	}
 
-	var providedBucket *Bucket
-	if t.BucketID != 0 {
-		providedBucket, err = getBucketByID(s, t.BucketID)
-		if err != nil {
-			return
-		}
-
-		_, err = checkBucketLimit(s, a, t, providedBucket)
-		if err != nil {
-			return
-		}
+	views, err := lockProjectViewsForPositionUpdate(s, projectID)
+	if err != nil {
+		return err
 	}
 
-	positions, taskBuckets, err := setTaskInBucketInViews(s, t, a, setBucket, providedBucket)
+	positions, taskBuckets, err := setTasksInBucketInViews(s, views, tasks, a, setBucket, taskProvidedBucket)
 	if err != nil {
 		return err
 	}
@@ -993,7 +1115,7 @@ func createTask(s *xorm.Session, t *Task, a web.Auth, updateAssignees bool, setB
 	}
 
 	if len(positions) > 0 {
-		_, err = s.Insert(&positions)
+		err = bulkInsertTaskPositions(s, positions, false)
 		if err != nil {
 			return
 		}
@@ -1004,108 +1126,144 @@ func createTask(s *xorm.Session, t *Task, a web.Auth, updateAssignees bool, setB
 		}
 	}
 
-	if len(taskBuckets) > 0 {
-		_, err = s.Insert(&taskBuckets)
+	// Keep statements well below the parameter limits of all supported databases.
+	const taskBucketBatchSize = 100
+	for chunk := range slices.Chunk(taskBuckets, taskBucketBatchSize) {
+		_, err = s.Insert(chunk)
 		if err != nil {
 			return
 		}
 	}
 
-	t.CreatedBy = createdBy
+	// Link shares can't have subscriptions
+	_, creatorIsUser := a.(*user.User)
 
-	// Update the assignees
-	if updateAssignees {
-		if err := t.updateTaskAssignees(s, t.Assignees, a); err != nil {
+	for _, t := range tasks {
+		t.CreatedBy = createdBy
+
+		// Update the assignees
+		if updateAssignees {
+			if err := t.updateTaskAssignees(s, t.Assignees, a); err != nil {
+				return err
+			}
+		}
+
+		// Update the reminders
+		if err := t.updateReminders(s, t); err != nil {
 			return err
 		}
-	}
 
-	// Update the reminders
-	if err := t.updateReminders(s, t); err != nil {
-		return err
-	}
+		t.setIdentifier(p)
 
-	t.setIdentifier(p)
-
-	if t.IsFavorite {
-		if err := addToFavorites(s, t.ID, createdBy, FavoriteKindTask); err != nil {
-			return err
+		if t.IsFavorite {
+			if err := addToFavorites(s, t.ID, createdBy, FavoriteKindTask); err != nil {
+				return err
+			}
 		}
+
+		if creatorIsUser {
+			if err := subscribeUserImplicitly(s, SubscriptionEntityTask, t.ID, createdBy); err != nil {
+				return err
+			}
+		}
+
+		events.DispatchOnCommit(s, &TaskCreatedEvent{
+			Task: t,
+			Doer: createdBy,
+		})
 	}
 
-	events.DispatchOnCommit(s, &TaskCreatedEvent{
-		Task: t,
-		Doer: createdBy,
+	events.DispatchOnCommit(s, &TasksBatchCreatedEvent{
+		Tasks: tasks,
+		Doer:  createdBy,
 	})
 
-	err = updateProjectLastUpdated(s, &Project{ID: t.ProjectID})
+	err = updateProjectLastUpdated(s, &Project{ID: projectID})
 	return
 }
 
-func setTaskInBucketInViews(s *xorm.Session, t *Task, a web.Auth, setBucket bool, providedBucket *Bucket) ([]*TaskPosition, []*TaskBucket, error) {
-	views, err := getViewsForProject(s, t.ProjectID)
-	if err != nil {
-		return nil, nil, err
+func setTasksInBucketInViews(s *xorm.Session, views []*ProjectView, tasks []*Task, a web.Auth, setBucket bool, providedBuckets map[int64]*Bucket) ([]*TaskPosition, []*TaskBucket, error) {
+	if len(tasks) == 0 {
+		return nil, nil, nil
 	}
 
-	positions := []*TaskPosition{}
+	var err error
 	taskBuckets := []*TaskBucket{}
 
-	var moveToDone bool
+	defaultBucketIDs := make(map[int64]int64)
+	cachedDefaultBucketID := func(view *ProjectView) (int64, error) {
+		if id, has := defaultBucketIDs[view.ID]; has {
+			return id, nil
+		}
+		id, err := getDefaultBucketID(s, view)
+		if err != nil {
+			return 0, err
+		}
+		defaultBucketIDs[view.ID] = id
+		return id, nil
+	}
 
-	for _, view := range views {
-		if setBucket && !moveToDone &&
-			view.ViewKind == ProjectViewKindKanban &&
-			view.BucketConfigurationMode == BucketConfigurationModeManual {
+	for _, t := range tasks {
+		var moveToDone bool
+		taskBucketsForTask := []*TaskBucket{}
+		providedBucket := providedBuckets[t.ID]
 
-			bucketID := view.DoneBucketID
-			if !t.Done || view.DoneBucketID == 0 {
-				if providedBucket != nil && view.ID == providedBucket.ProjectViewID {
-					bucketID = providedBucket.ID
-				} else {
-					bucketID, err = getDefaultBucketID(s, view)
+		for _, view := range views {
+			if setBucket && !moveToDone &&
+				view.ViewKind == ProjectViewKindKanban &&
+				view.BucketConfigurationMode == BucketConfigurationModeManual {
+
+				bucketID := view.DoneBucketID
+				if !t.Done || view.DoneBucketID == 0 {
+					if providedBucket != nil && view.ID == providedBucket.ProjectViewID {
+						bucketID = providedBucket.ID
+					} else {
+						bucketID, err = cachedDefaultBucketID(view)
+						if err != nil {
+							return nil, nil, err
+						}
+					}
+				}
+
+				if view.DoneBucketID != 0 && view.DoneBucketID == t.BucketID && !t.Done {
+					t.Done = true
+					_, err = s.Where("id = ?", t.ID).
+						Cols("done").
+						Update(t)
 					if err != nil {
 						return nil, nil, err
 					}
+
+					err = t.moveTaskToDoneBuckets(s, a, views)
+					if err != nil {
+						return nil, nil, err
+					}
+
+					moveToDone = true
+
+					continue
 				}
+
+				taskBucketsForTask = append(taskBucketsForTask, &TaskBucket{
+					BucketID:      bucketID,
+					TaskID:        t.ID,
+					ProjectViewID: view.ID,
+				})
 			}
-
-			if view.DoneBucketID != 0 && view.DoneBucketID == t.BucketID && !t.Done {
-				t.Done = true
-				_, err = s.Where("id = ?", t.ID).
-					Cols("done").
-					Update(t)
-				if err != nil {
-					return nil, nil, err
-				}
-
-				err = t.moveTaskToDoneBuckets(s, a, views)
-				if err != nil {
-					return nil, nil, err
-				}
-
-				moveToDone = true
-
-				continue
-			}
-
-			taskBuckets = append(taskBuckets, &TaskBucket{
-				BucketID:      bucketID,
-				TaskID:        t.ID,
-				ProjectViewID: view.ID,
-			})
 		}
 
-		newPosition, err := calculateNewPositionForTask(s, a, t, view)
+		if !moveToDone {
+			taskBuckets = append(taskBuckets, taskBucketsForTask...)
+		}
+	}
+
+	positions := []*TaskPosition{}
+	for _, view := range views {
+		viewPositions, err := calculateNewPositionsForTasks(s, a, tasks, view)
 		if err != nil {
 			return nil, nil, err
 		}
-
-		positions = append(positions, newPosition)
-	}
-
-	if moveToDone {
-		taskBuckets = []*TaskBucket{}
+		positions = append(positions, viewPositions...)
 	}
 
 	return positions, taskBuckets, nil
@@ -1133,8 +1291,8 @@ func (t *Task) Update(s *xorm.Session, a web.Auth) (err error) {
 //nolint:gocyclo
 func (t *Task) updateSingleTask(s *xorm.Session, a web.Auth, fields []string) (err error) {
 
-	// Check if the task exists and get the old values
-	ot, err := GetTaskByIDSimple(s, t.ID)
+	// Row lock so concurrent movers serialize; bypasses the session memo so the read is not the earlier permission-check copy.
+	ot, err := GetTaskSimple(lockingSession(s), &Task{ID: t.ID})
 	if err != nil {
 		return
 	}
@@ -1172,18 +1330,17 @@ func (t *Task) updateSingleTask(s *xorm.Session, a web.Auth, fields []string) (e
 		"project_id",
 		"bucket_id",
 		"repeat_mode",
-		"repeat_as_new",
 		"cover_image_attachment_id",
 	}
 
 	// Validate fields if provided
+	fieldSet := map[string]bool{}
 	if len(fields) > 0 {
 		allowed := map[string]bool{}
 		for _, c := range colsToUpdate {
 			allowed[c] = true
 		}
 		cols := []string{}
-		fieldSet := map[string]bool{}
 		for _, f := range fields {
 			if !allowed[f] {
 				return ErrInvalidTaskColumn{Column: f}
@@ -1233,9 +1390,6 @@ func (t *Task) updateSingleTask(s *xorm.Session, a web.Auth, fields []string) (e
 		if !fieldSet["repeat_mode"] {
 			t.RepeatMode = ot.RepeatMode
 		}
-		if !fieldSet["repeat_as_new"] {
-			t.RepeatAsNew = ot.RepeatAsNew
-		}
 		if !fieldSet["cover_image_attachment_id"] {
 			t.CoverImageAttachmentID = ot.CoverImageAttachmentID
 		}
@@ -1247,7 +1401,26 @@ func (t *Task) updateSingleTask(s *xorm.Session, a web.Auth, fields []string) (e
 
 	// If the task is being moved between projects, make sure to move the bucket + index as well
 	if t.ProjectID != 0 && ot.ProjectID != t.ProjectID {
-		t.Index, err = calculateNextTaskIndex(s, t.ProjectID)
+		// Another task may already hold this retired address; the latest holder wins.
+		alias := &TaskIndexAlias{ProjectID: ot.ProjectID, Index: ot.Index}
+		has, err := s.Get(alias)
+		if err != nil {
+			return err
+		}
+		switch {
+		case !has:
+			_, err = s.Insert(&TaskIndexAlias{ProjectID: ot.ProjectID, Index: ot.Index, TaskID: ot.ID})
+		case alias.TaskID != ot.ID:
+			_, err = s.Where("project_id = ? AND `index` = ?", ot.ProjectID, ot.Index).
+				Cols("task_id").
+				Update(&TaskIndexAlias{TaskID: ot.ID})
+		}
+		if err != nil {
+			return err
+		}
+
+		t.Index = 0
+		err = setNewTaskIndexes(s, t.ProjectID, []*Task{t})
 		if err != nil {
 			return err
 		}
@@ -1257,6 +1430,12 @@ func (t *Task) updateSingleTask(s *xorm.Session, a web.Auth, fields []string) (e
 
 	views := []*ProjectView{}
 	if t.Done != ot.Done || t.ProjectID != ot.ProjectID {
+		// Locks both projects: a move rewrites task_positions in the old project too.
+		_, err = lockProjectViewsForPositionUpdate(s, ot.ProjectID, t.ProjectID)
+		if err != nil {
+			return
+		}
+
 		err = s.
 			Where("project_id = ? AND view_kind = ? AND bucket_configuration_mode = ?",
 				t.ProjectID, ProjectViewKindKanban, BucketConfigurationModeManual).
@@ -1317,22 +1496,40 @@ func (t *Task) updateSingleTask(s *xorm.Session, a web.Auth, fields []string) (e
 		}
 	}
 
-	spawnNextOccurrence := t.ProjectID == ot.ProjectID && t.isRepeating() && t.RepeatAsNew && !ot.Done && t.Done
-
 	// Repeating tasks don't stay in the done bucket — route them back
 	// to the default bucket so the next iteration shows up in the
 	// "To-Do" column. See #2573.
-	if t.ProjectID == ot.ProjectID && t.isRepeating() && !t.RepeatAsNew && !ot.Done && t.Done {
+	if t.ProjectID == ot.ProjectID && t.isRepeating() && !ot.Done && t.Done {
 		err = t.moveTaskToDefaultBuckets(s, a, views)
 		if err != nil {
 			return
 		}
 	}
 
+	preRepeatDueDate, preRepeatStartDate, preRepeatEndDate := t.DueDate, t.StartDate, t.EndDate
+	preRepeatDescription := t.Description
+
 	// When a repeating task is marked as done, we update all deadlines and reminders and set it as undone
 	updateDoneAt := updateDone(&ot, t)
 	if updateDoneAt {
 		colsToUpdate = append(colsToUpdate, "done_at")
+	}
+
+	// updateDone reschedules after colsToUpdate was frozen from the caller's field list,
+	// so whatever it rewrote has to be added back or it gets computed and thrown away.
+	if len(fields) > 0 {
+		if !fieldSet["due_date"] && !t.DueDate.Equal(preRepeatDueDate) {
+			colsToUpdate = append(colsToUpdate, "due_date")
+		}
+		if !fieldSet["start_date"] && !t.StartDate.Equal(preRepeatStartDate) {
+			colsToUpdate = append(colsToUpdate, "start_date")
+		}
+		if !fieldSet["end_date"] && !t.EndDate.Equal(preRepeatEndDate) {
+			colsToUpdate = append(colsToUpdate, "end_date")
+		}
+		if !fieldSet["description"] && t.Description != preRepeatDescription {
+			colsToUpdate = append(colsToUpdate, "description")
+		}
 	}
 
 	// Update the reminders
@@ -1443,10 +1640,6 @@ func (t *Task) updateSingleTask(s *xorm.Session, a web.Auth, fields []string) (e
 	if t.RepeatMode == TaskRepeatModeDefault {
 		ot.RepeatMode = TaskRepeatModeDefault
 	}
-	// Repeat by creating a new occurrence
-	if !t.RepeatAsNew {
-		ot.RepeatAsNew = false
-	}
 	// Is Favorite
 	if !t.IsFavorite {
 		ot.IsFavorite = false
@@ -1462,18 +1655,6 @@ func (t *Task) updateSingleTask(s *xorm.Session, a web.Auth, fields []string) (e
 	*t = ot
 	if err != nil {
 		return err
-	}
-
-	if spawnNextOccurrence {
-		err = t.moveTaskToDoneBuckets(s, a, views)
-		if err != nil {
-			return err
-		}
-
-		_, err = createNextRecurringTask(s, t, &ot, a)
-		if err != nil {
-			return err
-		}
 	}
 
 	// Get the task updated timestamp in a new struct - if we'd just try to put it into t which we already have, it
@@ -1496,6 +1677,26 @@ func (t *Task) updateSingleTask(s *xorm.Session, a web.Auth, fields []string) (e
 // updateTasks updates multiple tasks with the same payload.
 // If fields is nil, it updates the default set of columns.
 func updateTasks(s *xorm.Session, a web.Auth, t *Task, ids []int64, fields []string) (tasks []*Task, err error) {
+	// Ids may span projects; per-task locking would follow caller order, not view order.
+	existing := []*Task{}
+	err = s.Table(&Task{}).Where(builder.In("id", ids)).Distinct("project_id").Find(&existing)
+	if err != nil {
+		return nil, fmt.Errorf("could not load projects of tasks to update: %w", err)
+	}
+
+	projectIDs := make([]int64, 0, len(existing)+1)
+	for _, et := range existing {
+		projectIDs = append(projectIDs, et.ProjectID)
+	}
+	if t.ProjectID != 0 {
+		projectIDs = append(projectIDs, t.ProjectID)
+	}
+
+	_, err = lockProjectViewsForPositionUpdate(s, projectIDs...)
+	if err != nil {
+		return nil, fmt.Errorf("could not lock project views for bulk task update: %w", err)
+	}
+
 	for _, id := range ids {
 		nt := clone.Clone(t)
 		nt.ID = id
@@ -1649,7 +1850,7 @@ func setTaskDatesDefault(oldTask, newTask *Task) {
 		newTask.DueDate = addRepeatIntervalToTime(now, oldTask.DueDate, repeatDuration)
 	}
 
-	newTask.Reminders = cloneTaskReminders(oldTask.Reminders)
+	newTask.Reminders = oldTask.Reminders
 	// When repeating from the current date, all reminders should keep their difference to each other.
 	// To make this easier, we sort them first because we can then rely on the fact the first is the smallest
 	if len(oldTask.Reminders) > 0 {
@@ -1675,7 +1876,7 @@ func setTaskDatesMonthRepeat(oldTask, newTask *Task) {
 		newTask.DueDate = addOneMonthToDate(oldTask.DueDate)
 	}
 
-	newTask.Reminders = cloneTaskReminders(oldTask.Reminders)
+	newTask.Reminders = oldTask.Reminders
 	if len(oldTask.Reminders) > 0 {
 		for in, r := range oldTask.Reminders {
 			newTask.Reminders[in].Reminder = addOneMonthToDate(r.Reminder)
@@ -1714,17 +1915,18 @@ func setTaskDatesFromCurrentDateRepeat(oldTask, newTask *Task) {
 		newTask.DueDate = now.Add(repeatDuration)
 	}
 
-	newTask.Reminders = cloneTaskReminders(oldTask.Reminders)
-	// When repeating from the current date, all reminders should keep their difference to each other.
-	// To make this easier, we sort them first because we can then rely on the fact the first is the smallest
+	newTask.Reminders = oldTask.Reminders
+	// The earliest reminder moves to now + interval, all others keep their distance to it.
 	if len(oldTask.Reminders) > 0 {
-		sort.Slice(oldTask.Reminders, func(i, j int) bool {
-			return oldTask.Reminders[i].Reminder.Unix() < oldTask.Reminders[j].Reminder.Unix()
-		})
 		first := oldTask.Reminders[0].Reminder
+		for _, r := range oldTask.Reminders[1:] {
+			if r.Reminder.Before(first) {
+				first = r.Reminder
+			}
+		}
+		newFirst := now.Add(repeatDuration)
 		for in, r := range oldTask.Reminders {
-			diff := r.Reminder.Sub(first)
-			newTask.Reminders[in].Reminder = now.Add(repeatDuration + diff)
+			newTask.Reminders[in].Reminder = shiftTime(r.Reminder, first, newFirst)
 		}
 	}
 
@@ -1736,9 +1938,8 @@ func setTaskDatesFromCurrentDateRepeat(oldTask, newTask *Task) {
 		// end date should keep the difference to the start date when setting
 		// them as new
 		if !oldTask.StartDate.IsZero() && !oldTask.EndDate.IsZero() {
-			diff := oldTask.EndDate.Sub(oldTask.StartDate)
 			newTask.StartDate = now.Add(repeatDuration)
-			newTask.EndDate = now.Add(repeatDuration + diff)
+			newTask.EndDate = shiftTime(oldTask.EndDate, oldTask.StartDate, newTask.StartDate)
 		} else {
 			if !oldTask.StartDate.IsZero() {
 				newTask.StartDate = now.Add(repeatDuration)
@@ -1752,19 +1953,30 @@ func setTaskDatesFromCurrentDateRepeat(oldTask, newTask *Task) {
 		// If the old task has a start and due date, we set the new start date
 		// to preserve the interval between them.
 		if !oldTask.StartDate.IsZero() {
-			diff := oldTask.DueDate.Sub(oldTask.StartDate)
-			newTask.StartDate = newTask.DueDate.Add(-diff)
+			newTask.StartDate = shiftTime(oldTask.StartDate, oldTask.DueDate, newTask.DueDate)
 		}
 
 		// If the old task has an end and due date, we set the new end date
 		// to preserve the interval between them.
 		if !oldTask.EndDate.IsZero() {
-			diff := oldTask.DueDate.Sub(oldTask.EndDate)
-			newTask.EndDate = newTask.DueDate.Add(-diff)
+			newTask.EndDate = shiftTime(oldTask.EndDate, oldTask.DueDate, newTask.DueDate)
 		}
 	}
 
 	newTask.Done = false
+}
+
+// shiftTime moves t by the same offset that takes from to to.
+// time.Time.Sub saturates at ~292 years, so for larger spans the offset is
+// applied as whole years plus a small remainder instead of one Duration.
+func shiftTime(t, from, to time.Time) time.Time {
+	diff := to.Sub(from)
+	if diff != math.MaxInt64 && diff != math.MinInt64 {
+		return t.Add(diff)
+	}
+	years := to.Year() - from.Year()
+	rest := to.Sub(from.AddDate(years, 0, 0))
+	return t.AddDate(years, 0, 0).Add(rest)
 }
 
 var (
@@ -1781,138 +1993,6 @@ func resetDescriptionChecklist(description string) string {
 	return description
 }
 
-func cloneTaskReminders(reminders []*TaskReminder) []*TaskReminder {
-	if len(reminders) == 0 {
-		return nil
-	}
-
-	cloned := make([]*TaskReminder, 0, len(reminders))
-	for _, reminder := range reminders {
-		if reminder == nil {
-			continue
-		}
-		copy := *reminder
-		copy.ID = 0
-		copy.TaskID = 0
-		cloned = append(cloned, &copy)
-	}
-
-	if len(cloned) == 0 {
-		return nil
-	}
-
-	return cloned
-}
-
-func buildNextRecurringTask(currentTask, sourceTask *Task) *Task {
-	nextTask := &Task{
-		Title:       currentTask.Title,
-		Description: currentTask.Description,
-		DueDate:     currentTask.DueDate,
-		ProjectID:   currentTask.ProjectID,
-		RepeatAfter: currentTask.RepeatAfter,
-		RepeatMode:  currentTask.RepeatMode,
-		RepeatAsNew: currentTask.RepeatAsNew,
-		Priority:    currentTask.Priority,
-		StartDate:   currentTask.StartDate,
-		EndDate:     currentTask.EndDate,
-		HexColor:    currentTask.HexColor,
-		Reminders:   cloneTaskReminders(sourceTask.Reminders),
-	}
-
-	sourceForDates := *sourceTask
-	sourceForDates.Title = currentTask.Title
-	sourceForDates.Description = currentTask.Description
-	sourceForDates.ProjectID = currentTask.ProjectID
-	sourceForDates.RepeatAfter = currentTask.RepeatAfter
-	sourceForDates.RepeatMode = currentTask.RepeatMode
-	sourceForDates.RepeatAsNew = currentTask.RepeatAsNew
-	sourceForDates.Priority = currentTask.Priority
-	sourceForDates.StartDate = currentTask.StartDate
-	sourceForDates.EndDate = currentTask.EndDate
-	sourceForDates.DueDate = currentTask.DueDate
-	sourceForDates.HexColor = currentTask.HexColor
-	sourceForDates.Reminders = cloneTaskReminders(sourceTask.Reminders)
-
-	switch currentTask.RepeatMode {
-	case TaskRepeatModeMonth:
-		setTaskDatesMonthRepeat(&sourceForDates, nextTask)
-	case TaskRepeatModeFromCurrentDate:
-		setTaskDatesFromCurrentDateRepeat(&sourceForDates, nextTask)
-	default:
-		setTaskDatesDefault(&sourceForDates, nextTask)
-	}
-
-	nextTask.Description = resetDescriptionChecklist(nextTask.Description)
-	nextTask.PercentDone = 0
-	nextTask.BucketID = 0
-	nextTask.Done = false
-	nextTask.DoneAt = time.Time{}
-
-	return nextTask
-}
-
-func getTaskAssignees(s *xorm.Session, taskID int64) ([]*user.User, error) {
-	rawAssignees, err := getRawTaskAssigneesForTasks(s, []int64{taskID})
-	if err != nil {
-		return nil, err
-	}
-
-	if len(rawAssignees) == 0 {
-		return nil, nil
-	}
-
-	assignees := make([]*user.User, 0, len(rawAssignees))
-	for i := range rawAssignees {
-		u := rawAssignees[i].User
-		assignees = append(assignees, &u)
-	}
-
-	return assignees, nil
-}
-
-func copyLabelLinksToTask(s *xorm.Session, fromTaskID, toTaskID int64) error {
-	labelTasks := []*LabelTask{}
-	err := s.Where("task_id = ?", fromTaskID).Find(&labelTasks)
-	if err != nil {
-		return err
-	}
-
-	for _, lt := range labelTasks {
-		lt.ID = 0
-		lt.TaskID = toTaskID
-	}
-
-	if len(labelTasks) == 0 {
-		return nil
-	}
-
-	_, err = s.Insert(&labelTasks)
-	return err
-}
-
-func createNextRecurringTask(s *xorm.Session, currentTask, sourceTask *Task, a web.Auth) (*Task, error) {
-	nextTask := buildNextRecurringTask(currentTask, sourceTask)
-
-	assignees, err := getTaskAssignees(s, currentTask.ID)
-	if err != nil {
-		return nil, err
-	}
-	nextTask.Assignees = assignees
-
-	err = createTask(s, nextTask, a, true, true)
-	if err != nil {
-		return nil, err
-	}
-
-	err = copyLabelLinksToTask(s, currentTask.ID, nextTask.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	return nextTask, nil
-}
-
 // This helper function updates the reminders, doneAt, start, end and due dates of the *old* task
 // and saves the new values in the newTask object.
 // We make a few assumptions here:
@@ -1923,20 +2003,18 @@ func updateDone(oldTask *Task, newTask *Task) (updateDoneAt bool) {
 	doneStatusChanged := oldTask.Done != newTask.Done
 
 	if !oldTask.Done && newTask.Done {
-		if oldTask.isRepeating() && !newTask.RepeatAsNew {
-			switch oldTask.RepeatMode {
-			case TaskRepeatModeMonth:
-				setTaskDatesMonthRepeat(oldTask, newTask)
-			case TaskRepeatModeFromCurrentDate:
-				setTaskDatesFromCurrentDateRepeat(oldTask, newTask)
-			case TaskRepeatModeDefault:
-				setTaskDatesDefault(oldTask, newTask)
-			}
+		switch oldTask.RepeatMode {
+		case TaskRepeatModeMonth:
+			setTaskDatesMonthRepeat(oldTask, newTask)
+		case TaskRepeatModeFromCurrentDate:
+			setTaskDatesFromCurrentDateRepeat(oldTask, newTask)
+		case TaskRepeatModeDefault:
+			setTaskDatesDefault(oldTask, newTask)
+		}
 
-			// A recurring task reopens for its next occurrence, so its checklist starts fresh.
-			if !newTask.Done {
-				newTask.Description = resetDescriptionChecklist(newTask.Description)
-			}
+		// A recurring task reopens for its next occurrence, so its checklist starts fresh.
+		if oldTask.isRepeating() && !newTask.Done {
+			newTask.Description = resetDescriptionChecklist(newTask.Description)
 		}
 
 		newTask.DoneAt = time.Now()
@@ -2059,6 +2137,11 @@ func (t *Task) Delete(s *xorm.Session, a web.Auth) (err error) {
 	err = fullTask.ReadOne(s, a)
 	if err != nil {
 		return err
+	}
+
+	_, err = lockProjectViewsForPositionUpdate(s, fullTask.ProjectID)
+	if err != nil {
+		return
 	}
 
 	// Bucket and position rows are removed right away because bucket counts
@@ -2189,6 +2272,11 @@ func hardDeleteTask(s *xorm.Session, t *Task) (err error) {
 	}
 
 	_, err = s.Where("task_id = ?", t.ID).Delete(&TaskBucket{})
+	if err != nil {
+		return
+	}
+
+	_, err = s.Where("task_id = ?", t.ID).Delete(&TaskIndexAlias{})
 	if err != nil {
 		return
 	}

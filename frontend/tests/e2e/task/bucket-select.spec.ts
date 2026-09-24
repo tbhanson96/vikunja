@@ -5,7 +5,8 @@ import {TaskFactory} from '../../factories/task'
 import {ProjectViewFactory} from '../../factories/project_view'
 import {TaskBucketFactory} from '../../factories/task_buckets'
 import {TaskRelationFactory} from '../../factories/task_relation'
-import type {Page} from '@playwright/test'
+import {TaskAssigneeFactory} from '../../factories/task_assignee'
+import {UserFactory} from '../../factories/user'
 
 async function createKanbanTaskInBucket() {
 	const projects = await ProjectFactory.create(1)
@@ -34,11 +35,6 @@ async function createKanbanTaskInBucket() {
 	}
 }
 
-async function openPreviewEditor(page: Page) {
-	await page.locator('.task-preview .button').filter({hasText: 'Edit'}).click()
-	await expect(page.locator('.task-view')).toBeVisible()
-}
-
 test.describe('Task Bucket Select', () => {
 	test('Shows the current bucket name when opening a task from a kanban view', async ({authenticatedPage: page}) => {
 		const {project, view, buckets, task} = await createKanbanTaskInBucket()
@@ -47,7 +43,6 @@ test.describe('Task Bucket Select', () => {
 		await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
 		await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
 		await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
-		await openPreviewEditor(page)
 
 		await expect(page.locator('.task-view .subtitle')).toContainText(buckets[0].title)
 	})
@@ -59,7 +54,6 @@ test.describe('Task Bucket Select', () => {
 		await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
 		await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
 		await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
-		await openPreviewEditor(page)
 
 		// Click the bucket name to open the dropdown
 		await page.locator('.task-view .subtitle .bucket-name').click()
@@ -90,7 +84,6 @@ test.describe('Task Bucket Select', () => {
 		await page.goto(`/projects/${projects[0].id}/${views[0].id}`)
 		await page.locator('.tasks .task').filter({hasText: tasks[0].title}).click()
 		await expect(page).toHaveURL(new RegExp(`/tasks/${tasks[0].id}`))
-		await openPreviewEditor(page)
 
 		await expect(page.locator('.task-view .subtitle .bucket-name')).not.toBeVisible()
 	})
@@ -155,7 +148,6 @@ test.describe('Task Bucket Select', () => {
 			await page.goto(`/projects/${project.id}/${listView.id}`)
 			await page.locator('.tasks .task').filter({hasText: task.title}).click()
 			await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
-			await openPreviewEditor(page)
 
 			await expect(page.locator('.task-view .subtitle .bucket-name')).not.toBeVisible()
 		})
@@ -167,7 +159,6 @@ test.describe('Task Bucket Select', () => {
 			await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
 			await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
 			await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
-			await openPreviewEditor(page)
 
 			await expect(page.locator('.task-view .subtitle')).toContainText(bucketsView1[0].title)
 			await page.locator('.task-view .subtitle .bucket-name').click()
@@ -184,7 +175,6 @@ test.describe('Task Bucket Select', () => {
 			await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
 			await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
 			await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
-			await openPreviewEditor(page)
 
 			await expect(page.locator('.task-view .subtitle')).toContainText(bucketsView2[0].title)
 			await page.locator('.task-view .subtitle .bucket-name').click()
@@ -195,6 +185,73 @@ test.describe('Task Bucket Select', () => {
 		})
 	})
 
+	test('Closes the dropdown after changing the bucket', async ({authenticatedPage: page}) => {
+		const {project, view, buckets, task} = await createKanbanTaskInBucket()
+
+		await page.goto(`/projects/${project.id}/${view.id}`)
+		await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
+		await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
+		await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
+
+		await page.locator('.task-view .subtitle .bucket-name').click()
+		const dropdownMenu = page.locator('.task-view .subtitle .dropdown-menu')
+		await expect(dropdownMenu).toBeVisible()
+
+		await page.locator('.task-view .subtitle .dropdown-item').filter({hasText: buckets[1].title}).click()
+
+		await expect(dropdownMenu).toBeHidden()
+	})
+
+	test('Renders the bucket dropdown above the remove assignee buttons', async ({authenticatedPage: page}) => {
+		const {project, view, task} = await createKanbanTaskInBucket()
+		// The dropdown is right-aligned to the bucket name in the breadcrumb, so it
+		// only reaches over the assignee avatars once the row is long enough.
+		// Start at 100 to keep the fixture's logged-in user (ID 1).
+		const users = await UserFactory.create(12, {
+			id: (i: number) => 100 + i,
+		}, false)
+		await TaskAssigneeFactory.create(users.length, {
+			task_id: task.id,
+			user_id: (i: number) => users[i - 1].id,
+		})
+
+		await page.goto(`/projects/${project.id}/${view.id}`)
+		await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
+		await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
+		await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
+
+		const removeButtons = page.locator('.task-view .column.assignees .remove-assignee')
+		await expect(removeButtons).toHaveCount(users.length)
+
+		await page.locator('.task-view .subtitle .bucket-name').click()
+		const dropdownMenu = page.locator('.task-view .subtitle .dropdown-menu')
+		await expect(dropdownMenu).toBeVisible()
+
+		const menuBox = (await dropdownMenu.boundingBox())!
+		const covered: {x: number, y: number}[] = []
+		for (const button of await removeButtons.all()) {
+			const box = (await button.boundingBox())!
+			const x = box.x + box.width / 2
+			const y = box.y + box.height / 2
+			if (x > menuBox.x && x < menuBox.x + menuBox.width
+				&& y > menuBox.y && y < menuBox.y + menuBox.height) {
+				covered.push({x, y})
+			}
+		}
+
+		// Guard the assumption above: without an overlap the stacking check below
+		// would pass without testing anything.
+		expect(covered.length).toBeGreaterThan(0)
+
+		for (const point of covered) {
+			const dropdownIsOnTop = await page.evaluate(
+				({x, y}) => document.elementFromPoint(x, y)?.closest('.dropdown-menu') !== null,
+				point,
+			)
+			expect(dropdownIsOnTop).toBe(true)
+		}
+	})
+
 	test('Keeps action buttons visible after changing the bucket', async ({authenticatedPage: page}) => {
 		const {project, view, buckets, task} = await createKanbanTaskInBucket()
 
@@ -202,7 +259,6 @@ test.describe('Task Bucket Select', () => {
 		await expect(page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title})).toBeVisible()
 		await page.locator('.kanban .bucket .tasks .task').filter({hasText: task.title}).click()
 		await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}`))
-		await openPreviewEditor(page)
 
 		// Change the bucket
 		await page.locator('.task-view .subtitle .bucket-name').click()

@@ -2,7 +2,7 @@ import {i18n} from '@/i18n'
 import {notify} from '@kyvg/vue3-notification'
 
 export function getErrorText(r): string {
-	const data = r?.reason?.response?.data || r?.response?.data
+	const data = r?.reason?.response?.data || r?.response?.data || r
 
 	if (data?.code) {
 		const path = `error.${data.code}`
@@ -21,11 +21,16 @@ export function getErrorText(r): string {
 	// v2 errors are RFC 9457 problem+json, which carries `detail` instead of `message`.
 	let message = data?.message || data?.detail || r.message
 	
-	if (typeof r.cause?.message !== 'undefined') {
-		message += ' ' + r.cause.message
+	const causeMessage = r.cause?.response?.data?.message ?? r.cause?.message
+	if (typeof causeMessage !== 'undefined') {
+		message += ' ' + causeMessage
 	}
 
 	return message
+}
+
+export function translatedError(key: string): Error {
+	return new Error(i18n.global.t(key))
 }
 
 export interface Action {

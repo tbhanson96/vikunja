@@ -41,7 +41,6 @@ test.describe('Editor link prompt inside the Kanban task popup', () => {
 		// The task popup must be a native <dialog> in the top layer.
 		const dialog = page.locator('dialog[open]')
 		await expect(dialog).toBeVisible()
-		await dialog.locator('.task-preview .button').filter({hasText: 'Edit'}).click()
 		await expect(dialog.locator('.task-view')).toBeVisible()
 
 		const editButton = dialog.locator('.details.content.description .tiptap button.done-edit').filter({hasText: 'Edit'})
@@ -99,7 +98,6 @@ test.describe('Editor link prompt inside the Kanban task popup', () => {
 
 		const dialog = page.locator('dialog[open]')
 		await expect(dialog).toBeVisible()
-		await dialog.locator('.task-preview .button').filter({hasText: 'Edit'}).click()
 		await expect(dialog.locator('.task-view')).toBeVisible()
 
 		const editButton = dialog.locator('.details.content.description .tiptap button.done-edit').filter({hasText: 'Edit'})

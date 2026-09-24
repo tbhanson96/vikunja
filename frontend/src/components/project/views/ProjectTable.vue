@@ -7,9 +7,13 @@
 	>
 		<template #header>
 			<div class="filter-container">
-				<Popup>
+				<Popup
+					placement="bottom-start"
+					:anchor="columnsTriggerEl"
+				>
 					<template #trigger="{toggle}">
 						<XButton
+							ref="columnsTrigger"
 							icon="th"
 							variant="secondary"
 							class="mie-2"
@@ -75,7 +79,7 @@
 					</template>
 				</Popup>
 				<FilterPopup
-					v-if="!isSavedFilter({id: projectId})"
+					v-if="!isSavedFilterProject({id: projectId})"
 					v-model="params"
 					:view-id="viewId"
 					:project-id="projectId"
@@ -242,12 +246,7 @@
 								>
 									<td v-if="activeColumns.index">
 										<RouterLink :to="taskDetailRoutes[t.id]">
-											<template v-if="t.identifier === ''">
-												#{{ t.index }}
-											</template>
-											<template v-else>
-												{{ t.identifier }}
-											</template>
+											{{ getTaskIdentifier(t) }}
 										</RouterLink>
 									</td>
 									<td v-if="activeColumns.done">
@@ -258,10 +257,10 @@
 									</td>
 									<td v-if="activeColumns.project">
 										<RouterLink
-											v-if="projectStore.projects[t.projectId]"
-											:to="{ name: 'project.index', params: { projectId: t.projectId } }"
+											v-if="projectList.projects[t.project_id]"
+											:to="{ name: 'project.index', params: { projectId: t.project_id } }"
 										>
-											{{ projectStore.projects[t.projectId].title }}
+											{{ projectList.projects[t.project_id].title }}
 										</RouterLink>
 									</td>
 									<td v-if="activeColumns.title">
@@ -292,25 +291,25 @@
 									</td>
 									<DateTableCell
 										v-if="activeColumns.dueDate"
-										:date="t.dueDate"
+										:date="t.due_date"
 									/>
 									<td v-if="activeColumns.commentCount">
 										<CommentCount :task="t" />
 									</td>
 									<DateTableCell
 										v-if="activeColumns.startDate"
-										:date="t.startDate"
+										:date="t.start_date"
 									/>
 									<DateTableCell
 										v-if="activeColumns.endDate"
-										:date="t.endDate"
+										:date="t.end_date"
 									/>
 									<td v-if="activeColumns.percentDone">
-										{{ t.percentDone * 100 }}%
+										{{ t.percent_done * 100 }}%
 									</td>
 									<DateTableCell
 										v-if="activeColumns.doneAt"
-										:date="t.doneAt"
+										:date="t.done_at"
 									/>
 									<DateTableCell
 										v-if="activeColumns.created"
@@ -324,7 +323,7 @@
 										<User
 											:avatar-size="27"
 											:show-username="false"
-											:user="t.createdBy"
+											:user="t.created_by ?? {}"
 										/>
 									</td>
 								</tr>
@@ -343,8 +342,7 @@
 </template>
 
 <script setup lang="ts">
-import {computed, type Ref, watch} from 'vue'
-import {useRouter} from 'vue-router'
+import {computed, ref, type ComponentPublicInstance, type Ref, watch} from 'vue'
 
 import {useStorage} from '@vueuse/core'
 
@@ -364,23 +362,23 @@ import Popup from '@/components/misc/Popup.vue'
 
 import type {SortBy} from '@/composables/useTaskList'
 import {useTaskList} from '@/composables/useTaskList'
-import type {ITask} from '@/modelTypes/ITask'
-import type {IProject} from '@/modelTypes/IProject'
+import type {TaskResponse} from '@/client/queries/tasks'
 import AssigneeList from '@/components/tasks/partials/AssigneeList.vue'
-import type {IProjectView} from '@/modelTypes/IProjectView'
+import {getTaskIdentifier} from '@/helpers/task'
 import { camelCase } from 'change-case'
-import {isSavedFilter} from '@/services/savedFilter'
-import {useProjectStore} from '@/stores/projects'
+import {isSavedFilterProject} from '@/client/queries/projects'
+import {useProjects} from '@/composables/useProjects'
 
 const props = defineProps<{
 	isLoadingProject: boolean,
-	projectId: IProject['id'],
-	viewId: IProjectView['id'],
+	projectId: number,
+	viewId: number,
 }>()
 
-const router = useRouter()
+const projectList = useProjects()
 
-const projectStore = useProjectStore()
+const columnsTrigger = ref<ComponentPublicInstance | null>(null)
+const columnsTriggerEl = computed<HTMLElement | null>(() => (columnsTrigger.value?.$el as HTMLElement) ?? null)
 
 const ACTIVE_COLUMNS_DEFAULT = {
 	index: true,
@@ -422,7 +420,7 @@ const {
 	currentPage,
 	sortByParam,
 } = taskList
-const tasks: Ref<ITask[]> = taskList.tasks
+const tasks: Ref<TaskResponse[]> = taskList.tasks
 
 watch(
 	() => activeColumns.value,
@@ -467,20 +465,22 @@ function sort(property: keyof SortBy, event?: MouseEvent) {
 
 function setActiveColumnsSortParam() {
 	sortByParam.value = Object.keys(sortBy.value)
-		.filter(prop => activeColumns.value[camelCase(prop)])
+		.filter(prop => activeColumns.value[camelCase(prop) as keyof typeof activeColumns.value])
 		.reduce((obj, key) => {
 			obj[key] = sortBy.value[key]
 			return obj
 		}, {})
 }
 
+// TODO: re-enable opening task detail in modal
+// const router = useRouter()
 const taskDetailRoutes = computed(() => Object.fromEntries(
 	tasks.value.map(({id}) => ([
 		id,
 		{
 			name: 'task.detail',
 			params: {id},
-			state: {backdropView: router.currentRoute.value.fullPath},
+			// state: { backdropView: router.currentRoute.value.fullPath },
 		},
 	])),
 ))
@@ -509,17 +509,10 @@ const taskDetailRoutes = computed(() => Object.fromEntries(
 		flex-direction: column;
 	}
 
-	&.is-open {
-		margin: 2rem 0 1rem;
-	}
 }
 
 .link-share-view .card {
 	border: none;
 	box-shadow: none;
-}
-
-.filter-container :deep(.popup) {
-	inset-block-start: 7rem;
 }
 </style>

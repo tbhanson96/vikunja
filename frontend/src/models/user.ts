@@ -1,3 +1,6 @@
+import {nextTick, reactive} from 'vue'
+import type {User} from '@/client/generated'
+
 import AbstractModel from './abstractModel'
 import UserSettingsModel from '@/models/userSettings'
 
@@ -9,23 +12,27 @@ const avatarService = new AvatarService()
 const avatarCache = new Map<string, string>()
 const pendingRequests = new Map<string, Promise<string>>()
 
-export async function fetchAvatarBlobUrl(user: IUser, size = 50) {
+// Bumped on invalidation so components rendering that user's cached avatar refetch it.
+export const avatarCacheVersions = reactive(new Map<string, number>())
+
+// Returns undefined, never '': Vue renders src="" which the browser resolves to the page
+// URL and reports as a failed image load.
+export async function fetchAvatarBlobUrl(user: Pick<User, 'username'>, size = 50): Promise<string | undefined> {
 	if (!user || !user.username) {
-		return ''
+		return undefined
 	}
 	const key = `${user.username}-${size}`
-	
-	// Return cached URL if available
-	if (avatarCache.has(key)) {
-		return avatarCache.get(key) as string
-	}
-	
-	// If there's already a pending request for this avatar, wait for it
-	if (pendingRequests.has(key)) {
-		return await pendingRequests.get(key) as string
+
+	const cached = avatarCache.get(key)
+	if (cached) {
+		return cached
 	}
 
-	// Create a new request
+	const pending = pendingRequests.get(key)
+	if (pending) {
+		return await pending
+	}
+
 	const requestPromise = avatarService.getBlobUrl(`/avatar/${user.username}?size=${size}`)
 		.then(url => {
 			avatarCache.set(key, url)
@@ -41,13 +48,18 @@ export async function fetchAvatarBlobUrl(user: IUser, size = 50) {
 	return await requestPromise
 }
 
-export function invalidateAvatarCache(user: IUser) {
+export function invalidateAvatarCache(user: Pick<IUser, 'username'>) {
 	if (!user || !user.username) {
 		return
 	}
 
+	const staleUrls: string[] = []
 	for (const key of Array.from(avatarCache.keys())) {
 		if (key.startsWith(`${user.username}-`)) {
+			const url = avatarCache.get(key)
+			if (url) {
+				staleUrls.push(url)
+			}
 			avatarCache.delete(key)
 		}
 	}
@@ -57,14 +69,18 @@ export function invalidateAvatarCache(user: IUser) {
 			pendingRequests.delete(key)
 		}
 	}
+
+	avatarCacheVersions.set(user.username, (avatarCacheVersions.get(user.username) ?? 0) + 1)
+
+	// Only after the version bump rendered: revoking a url a live <img> still holds
+	// breaks it on the next re-decode (print, content-visibility).
+	void nextTick(() => staleUrls.forEach(url => window.URL.revokeObjectURL(url)))
 }
 
-export function getDisplayName(user: IUser) {
-	if (user.name !== '') {
-		return user.name
-	}
+export type UserWithId = User & {id: number}
 
-	return user.username
+export function getDisplayName(user: Pick<User, 'name' | 'username'> | null | undefined) {
+	return user?.name || user?.username || ''
 }
 
 export default class UserModel extends AbstractModel<IUser> implements IUser {
@@ -80,6 +96,7 @@ export default class UserModel extends AbstractModel<IUser> implements IUser {
 	settings: IUserSettings
 
 	isLocalUser: boolean
+	pendingEmail = ''
 	deletionScheduledAt: null
 	isAdmin?: boolean
 	botOwnerId = 0

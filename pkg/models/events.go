@@ -35,6 +35,17 @@ func (t *TaskCreatedEvent) Name() string {
 	return "task.created"
 }
 
+// TasksBatchCreatedEvent is fired once per creation batch (a single create is a batch of one); per-task consumers keep using TaskCreatedEvent.
+type TasksBatchCreatedEvent struct {
+	Tasks []*Task    `json:"tasks"`
+	Doer  *user.User `json:"doer"`
+}
+
+// Name defines the name for TasksBatchCreatedEvent
+func (t *TasksBatchCreatedEvent) Name() string {
+	return "tasks.batch.created"
+}
+
 // TaskUpdatedEvent represents an event where a task has been updated
 type TaskUpdatedEvent struct {
 	Task *Task      `json:"task"`
@@ -563,3 +574,17 @@ type AdminAccessDeniedEvent struct {
 func (e *AdminAccessDeniedEvent) Name() string {
 	return "admin.access.denied"
 }
+
+type AdminInviteLinkCreatedEvent struct {
+	Link *UserInviteLink `json:"link"`
+	Doer *user.User      `json:"doer"`
+}
+
+func (e *AdminInviteLinkCreatedEvent) Name() string { return "admin.invite_link.created" }
+
+type AdminInviteLinkDeletedEvent struct {
+	Link *UserInviteLink `json:"link"`
+	Doer *user.User      `json:"doer"`
+}
+
+func (e *AdminInviteLinkDeletedEvent) Name() string { return "admin.invite_link.deleted" }

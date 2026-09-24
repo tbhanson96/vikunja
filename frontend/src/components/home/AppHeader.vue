@@ -75,13 +75,11 @@
 						:aria-expanded="open"
 						@click="toggleOpen"
 					>
-						<img
-							:src="authStore.avatarUrl"
-							alt=""
+						<UserAvatar
+							:user="authStore.info"
+							:size="40"
 							class="avatar"
-							width="40"
-							height="40"
-						>
+						/>
 						<span class="username">{{ authStore.userDisplayName }}</span>
 						<span
 							class="mis-1 dropdown-icon icon is-small"
@@ -146,6 +144,7 @@ import Logo from '@/components/home/Logo.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import MenuButton from '@/components/home/MenuButton.vue'
 import OpenQuickActions from '@/components/misc/OpenQuickActions.vue'
+import UserAvatar from '@/components/misc/UserAvatar.vue'
 
 import { getProjectTitle } from '@/helpers/getProjectTitle'
 import { isEditorContentEmpty } from '@/helpers/editorContentEmpty'
@@ -153,16 +152,16 @@ import { isEditorContentEmpty } from '@/helpers/editorContentEmpty'
 import { useBaseStore } from '@/stores/base'
 import { useConfigStore } from '@/stores/config'
 import { useAuthStore } from '@/stores/auth'
-import type { IProject } from '@/modelTypes/IProject'
+import {useCurrentProject} from '@/composables/useCurrentProject'
 
 const baseStore = useBaseStore()
-// Create a mutable copy to satisfy type requirements (readonly deep -> mutable)
-const currentProject = computed<IProject | null>(() => {
-	const project = baseStore.currentProject
-	return project ? { ...project } as IProject : null
-})
+const {currentProject} = useCurrentProject()
 const background = computed(() => baseStore.background)
-const canWriteCurrentProject = computed(() => baseStore.currentProject?.maxPermission !== null && baseStore.currentProject?.maxPermission !== undefined && baseStore.currentProject.maxPermission > Permissions.READ)
+const canWriteCurrentProject = computed(() =>
+	currentProject.value?.max_permission !== null &&
+	currentProject.value?.max_permission !== undefined &&
+	currentProject.value.max_permission > Permissions.READ,
+)
 const menuActive = computed(() => baseStore.menuActive)
 
 // Standalone pages (no project) surface their route's title in the header.

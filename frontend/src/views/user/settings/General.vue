@@ -57,6 +57,18 @@
 				/>
 			</FormField>
 			<FormField
+				:label="$t('user.settings.general.defaultDueTime')"
+				layout="two-col"
+			>
+				<FormInput
+					v-model="settings.frontendSettings.defaultDueTime"
+					type="time"
+				/>
+			</FormField>
+			<p class="help">
+				{{ $t('user.settings.general.defaultDueTimeDescription') }}
+			</p>
+			<FormField
 				v-if="hasFilters"
 				:label="$t('user.settings.general.filterUsedOnOverview')"
 				layout="two-col"
@@ -200,7 +212,7 @@
 					{{ $t('user.settings.general.quickAddDefaultRemindersHint') }}
 				</p>
 				<Reminders
-					v-model="settings.frontendSettings.quickAddDefaultReminders"
+					v-model="quickAddDefaultReminders"
 					:default-relative-to="REMINDER_PERIOD_RELATIVE_TO_TYPES.DUEDATE"
 					:allow-absolute="false"
 				/>
@@ -314,12 +326,12 @@ import {formatDisplayDateFormat} from '@/helpers/time/formatDate'
 
 import {useTitle} from '@/composables/useTitle'
 
-import {useProjectStore} from '@/stores/projects'
+import {useProjects} from '@/composables/useProjects'
 import {useAuthStore} from '@/stores/auth'
 import {useConfigStore} from '@/stores/config'
-import type {IUserSettings} from '@/modelTypes/IUserSettings'
-import {isSavedFilter} from '@/services/savedFilter'
-import {DEFAULT_PROJECT_VIEW_SETTINGS} from '@/modelTypes/IProjectView'
+import {taskRemindersFromSettings, type IUserSettings} from '@/modelTypes/IUserSettings'
+import {isSavedFilterProject} from '@/client/queries/projects'
+import {DEFAULT_PROJECT_VIEW_SETTINGS} from '@/constants/projectView'
 import {PRIORITIES} from '@/constants/priorities'
 import {DATE_DISPLAY} from '@/constants/dateDisplay'
 import {TIME_FORMAT} from '@/constants/timeFormat'
@@ -431,6 +443,15 @@ const settings = ref<IUserSettings>({
 		// Clone to escape the store's readonly array type.
 		quickAddDefaultReminders: [...(authStore.settings.frontendSettings.quickAddDefaultReminders ?? [])],
 		timeTrackingDefaultStart: authStore.settings.frontendSettings.timeTrackingDefaultStart ?? '09:00',
+	},
+})
+
+const quickAddDefaultReminders = computed({
+	get: () => taskRemindersFromSettings(settings.value.frontendSettings.quickAddDefaultReminders),
+	set: reminders => {
+		settings.value.frontendSettings.quickAddDefaultReminders = reminders.map(reminder => ({
+			relativePeriod: reminder.relative_period,
+		}))
 	},
 })
 
@@ -546,7 +567,7 @@ const {
 	timezoneObject,
 } = useAvailableTimezones(settings)
 
-const isExternalUser = computed(() => !authStore.info.isLocalUser)
+const isExternalUser = computed(() => authStore.info?.isLocalUser === false)
 
 watch(
 	() => authStore.settings,
@@ -566,20 +587,20 @@ watch(
 	{immediate: true},
 )
 
-const projectStore = useProjectStore()
+const projectList = useProjects()
 const defaultProject = computed({
-	get: () => projectStore.projects[settings.value.defaultProjectId],
+	get: () => projectList.projects[settings.value.defaultProjectId],
 	set(l) {
 		settings.value.defaultProjectId = l ? l.id : DEFAULT_PROJECT_ID
 	},
 })
 const filterUsedInOverview = computed({
-	get: () => projectStore.projects[settings.value.frontendSettings.filterIdUsedOnOverview],
+	get: () => projectList.projects[settings.value.frontendSettings.filterIdUsedOnOverview],
 	set(l) {
 		settings.value.frontendSettings.filterIdUsedOnOverview = l ? l.id : null
 	},
 })
-const hasFilters = computed(() => typeof projectStore.projectsArray.find(p => isSavedFilter(p)) !== 'undefined')
+const hasFilters = computed(() => projectList.projectsArray.some(isSavedFilterProject))
 const loading = computed(() => authStore.isLoadingGeneralSettings)
 
 async function updateSettings() {

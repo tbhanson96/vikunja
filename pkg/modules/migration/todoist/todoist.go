@@ -83,6 +83,7 @@ type item struct {
 	UserID         string      `json:"user_id"`
 	ProjectID      string      `json:"project_id"`
 	Content        string      `json:"content"`
+	Description    string      `json:"description"`
 	Priority       int64       `json:"priority"`
 	Due            *dueDate    `json:"due"`
 	ParentID       string      `json:"parent_id"`
@@ -321,6 +322,15 @@ func parseTodoistRepeat(due *dueDate) int64 {
 	return interval * repeatUnitSeconds[matches[3]]
 }
 
+func isDownloadableURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
 func convertTodoistToVikunja(sync *sync, doneItems map[string]*doneItem) (fullVikunjaHierachie []*models.ProjectWithTasksAndBuckets, err error) {
 
 	var pseudoParentID int64 = 1
@@ -395,10 +405,11 @@ func convertTodoistToVikunja(sync *sync, doneItems map[string]*doneItem) (fullVi
 
 		task := &models.TaskWithComments{
 			Task: models.Task{
-				Title:    i.Content,
-				Created:  i.DateAdded.In(config.GetTimeZone()),
-				Done:     i.Checked,
-				BucketID: sections[i.SectionID],
+				Title:       i.Content,
+				Description: i.Description,
+				Created:     i.DateAdded.In(config.GetTimeZone()),
+				Done:        i.Checked,
+				BucketID:    sections[i.SectionID],
 			},
 		}
 
@@ -500,10 +511,19 @@ func convertTodoistToVikunja(sync *sync, doneItems map[string]*doneItem) (fullVi
 
 		// Only add the attachment if there's something to download
 		if len(n.FileAttachment.FileURL) > 0 {
+			// Todoist puts opaque identifiers in file_url for attachments it does not host itself
+			// (mail attachments for example) - those can't be downloaded.
+			if !isDownloadableURL(n.FileAttachment.FileURL) {
+				log.Debugf("[Todoist Migration] Skipping attachment of note %s, file url %s is not downloadable", n.ID, n.FileAttachment.FileURL)
+				continue
+			}
+
 			// Download the attachment and put it in the file
 			buf, err := migration.DownloadFile(n.FileAttachment.FileURL)
 			if err != nil {
-				return nil, err
+				// A single broken attachment must not fail the whole migration
+				log.Errorf("[Todoist Migration] Could not download attachment of note %s from %s, skipping it. Error was: %s", n.ID, n.FileAttachment.FileURL, err)
+				continue
 			}
 
 			tasks[n.ItemID].Attachments = append(tasks[n.ItemID].Attachments, &models.TaskAttachment{
@@ -573,7 +593,7 @@ func getAccessTokenFromAuthToken(authToken string) (accessToken string, err erro
 	if resp.StatusCode > 399 {
 		buf := &bytes.Buffer{}
 		_, _ = buf.ReadFrom(resp.Body)
-		return "", fmt.Errorf("got http status %d while trying to get token, error was %s", resp.StatusCode, buf.String())
+		return "", fmt.Errorf("could not get todoist access token: %w", migration.NewErrUpstreamRequestFailed("todoist oauth", resp.StatusCode, buf.String()))
 	}
 
 	token := &apiTokenResponse{}

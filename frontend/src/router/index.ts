@@ -9,6 +9,8 @@ import {LINK_SHARE_HASH_PREFIX} from '@/constants/linkShareHash'
 import {REDIRECT_HASH_PREFIX} from '@/constants/redirectHash'
 import {AUTH_ROUTE_NAMES} from '@/constants/authRouteNames'
 import {PRO_FEATURE} from '@/constants/proFeatures'
+import {i18n} from '@/i18n'
+import {error, success} from '@/message'
 
 import {useAuthStore} from '@/stores/auth'
 import {useBaseStore} from '@/stores/base'
@@ -115,6 +117,11 @@ const router = createRouter({
 					},
 				},
 				{
+					path: '/user/settings/mcp',
+					name: 'user.settings.mcp',
+					component: () => import('@/views/user/settings/Mcp.vue'),
+				},
+				{
 					path: '/user/settings/data-export',
 					name: 'user.settings.data-export',
 					component: () => import('@/views/user/settings/DataExport.vue'),
@@ -211,12 +218,6 @@ const router = createRouter({
 		{
 			path: '/tasks/:id',
 			name: 'task.detail',
-			component: () => import('@/views/tasks/TaskPreviewView.vue'),
-			props: route => ({ taskId: Number(route.params.id as string) }),
-		},
-		{
-			path: '/tasks/:id/edit',
-			name: 'task.edit',
 			component: () => import('@/views/tasks/TaskDetailView.vue'),
 			props: route => ({ taskId: Number(route.params.id as string) }),
 		},
@@ -267,7 +268,7 @@ const router = createRouter({
 			},
 		},
 		{
-			path: '/projects/:projectId/settings/edit',
+			path: '/projects/:projectId(\\d+)/settings/edit',
 			name: 'project.settings.edit',
 			component: () => import('@/views/project/settings/ProjectSettingsEdit.vue'),
 			props: route => ({ projectId: Number(route.params.projectId as string) }),
@@ -308,7 +309,7 @@ const router = createRouter({
 			},
 		},
 		{
-			path: '/projects/:projectId/settings/delete',
+			path: '/projects/:projectId(\\d+)/settings/delete',
 			name: 'project.settings.delete',
 			component: () => import('@/views/project/settings/ProjectSettingsDelete.vue'),
 			meta: {
@@ -333,7 +334,8 @@ const router = createRouter({
 			props: route => ({ projectId: Number(route.params.projectId as string) }),
 		},
 		{
-			path: '/projects/:projectId/settings/edit',
+			// Saved-filter pseudo-projects use IDs <= -2; -1 is the Favorites pseudo-project.
+			path: '/projects/:projectId(-[2-9]\\d*|-1\\d+)/settings/edit',
 			name: 'filter.settings.edit',
 			component: () => import('@/views/filters/FilterEdit.vue'),
 			meta: {
@@ -342,7 +344,7 @@ const router = createRouter({
 			props: route => ({ projectId: Number(route.params.projectId as string) }),
 		},
 		{
-			path: '/projects/:projectId/settings/delete',
+			path: '/projects/:projectId(-[2-9]\\d*|-1\\d+)/settings/delete',
 			name: 'filter.settings.delete',
 			component: () => import('@/views/filters/FilterDelete.vue'),
 			meta: {
@@ -473,6 +475,14 @@ const router = createRouter({
 					name: 'admin.projects',
 					component: () => import('@/views/admin/ProjectsView.vue'),
 				},
+				{
+					path: 'invite-links',
+					name: 'admin.inviteLinks',
+					component: () => import('@/views/admin/InviteLinksView.vue'),
+					meta: {
+						requiresUserInvites: true,
+					},
+				},
 			],
 		},
 	],
@@ -484,6 +494,27 @@ export async function getAuthForRoute(to: RouteLocation, authStore) {
 	const redirectDest = to.name === 'user.login' && to.hash.startsWith(REDIRECT_HASH_PREFIX)
 		? to.hash.slice(REDIRECT_HASH_PREFIX.length)
 		: ''
+
+	// Signed-in browsers bounce off the login page, so the token has to be redeemed here.
+	const rawConfirmToken = to.query.userEmailConfirm
+	const confirmToken = Array.isArray(rawConfirmToken) ? rawConfirmToken[0] : rawConfirmToken
+	if (typeof confirmToken === 'string' && confirmToken !== '' && authStore.authUser) {
+		try {
+			// info may predate a change requested in another session; re-read before judging.
+			await authStore.refreshUserInfo()
+			const hadPending = !!authStore.info?.pendingEmail
+			await authStore.verifyEmail(confirmToken)
+			await authStore.refreshUserInfo()
+			if (hadPending && !authStore.info?.pendingEmail) {
+				success({message: i18n.global.t('user.settings.updateEmailConfirmed')})
+				return {name: 'user.settings.email-update'}
+			}
+		} catch (e) {
+			// verifyEmail rethrows with the axios error as cause; the i18n code lookup needs the original
+			error((e as {cause?: unknown})?.cause ?? e)
+		}
+		return {name: 'home'}
+	}
 
 	if (authStore.authUser || authStore.authLinkShare) {
 		// An already-signed-in browser that opens a copied /login#redirect=<oauth.authorize> URL
@@ -575,6 +606,15 @@ router.beforeEach(async (to, from) => {
 		}
 		const isAdmin = authStore.info?.isAdmin === true
 		if (!featureOn || !isAdmin) {
+			return {name: 'not-found'}
+		}
+	}
+
+	if (to.meta?.requiresUserInvites) {
+		const baseStore = useBaseStore()
+		await baseStore.appReady
+		const configStore = useConfigStore()
+		if (!configStore.isProFeatureEnabled(PRO_FEATURE.USER_INVITES)) {
 			return {name: 'not-found'}
 		}
 	}

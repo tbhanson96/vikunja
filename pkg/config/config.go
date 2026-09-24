@@ -145,6 +145,7 @@ const (
 	LogDatabase      Key = `log.database`
 	LogDatabaseLevel Key = `log.databaselevel`
 	LogHTTP          Key = `log.http`
+	LogHTTPLevel     Key = `log.httplevel`
 	LogPath          Key = `log.path`
 	LogEvents        Key = `log.events`
 	LogEventsLevel   Key = `log.eventslevel`
@@ -157,6 +158,8 @@ const (
 	RateLimitLimit             Key = `ratelimit.limit`
 	RateLimitStore             Key = `ratelimit.store`
 	RateLimitNoAuthRoutesLimit Key = `ratelimit.noauthlimit`
+	RateLimitTokenRefreshLimit Key = `ratelimit.tokenrefreshlimit`
+	RateLimitBasicAuthLimit    Key = `ratelimit.basicauthlimit`
 
 	FilesBasePath Key = `files.basepath`
 	FilesMaxSize  Key = `files.maxsize`
@@ -183,6 +186,11 @@ const (
 	MigrationMicrosoftTodoClientID     Key = `migration.microsofttodo.clientid`
 	MigrationMicrosoftTodoClientSecret Key = `migration.microsofttodo.clientsecret`
 	MigrationMicrosoftTodoRedirectURL  Key = `migration.microsofttodo.redirecturl`
+	MigrationClaimTimeout              Key = `migration.claimtimeout`
+	MigrationMaxCSVRows                Key = `migration.maxcsvrows`
+	MigrationVikunjaFileMaxSize        Key = `migration.vikunjafile.maxsize`
+	MigrationVikunjaFileMaxFiles       Key = `migration.vikunjafile.maxfiles`
+	MigrationVikunjaFileMaxUserStorage Key = `migration.vikunjafile.maxuserstorage`
 
 	CorsEnable  Key = `cors.enable`
 	CorsOrigins Key = `cors.origins`
@@ -202,6 +210,7 @@ const (
 	MetricsEnabled  Key = `metrics.enabled`
 	MetricsUsername Key = `metrics.username`
 	MetricsPassword Key = `metrics.password`
+	MetricsPprof    Key = `metrics.pprof`
 
 	DefaultSettingsAvatarProvider              Key = `defaultsettings.avatar_provider`
 	DefaultSettingsAvatarFileID                Key = `defaultsettings.avatar_file_id`
@@ -308,6 +317,15 @@ func (k Key) setDefault(i interface{}) {
 	viper.SetDefault(string(k), i)
 }
 
+// Per-category log levels fall back to log.level unless set explicitly.
+func applyDefaultLogLevels() {
+	for _, k := range []Key{LogDatabaseLevel, LogHTTPLevel, LogEventsLevel, LogMailLevel} {
+		if k.GetString() == "" {
+			k.Set(LogLevel.GetString())
+		}
+	}
+}
+
 // getRootpathLocation determines the default root path for Vikunja data.
 // It prefers the current working directory, which respects systemd's
 // WorkingDirectory= setting and is the most intuitive default.
@@ -343,6 +361,14 @@ func InitDefaultConfig() {
 	initDefaultConfig()
 	// Callers who skip InitConfig still need a usable secret.
 	generateServiceSecretIfEmpty()
+}
+
+// ResetForTests drops every value a test set and re-applies the defaults, so a later
+// InitConfig sees what it would in a fresh process. Restoring a saved value with Set
+// instead leaves it at viper's override level, where it outranks anything InitConfig loads.
+func ResetForTests() {
+	viper.Reset()
+	InitDefaultConfig()
 }
 
 func initDefaultConfig() {
@@ -404,7 +430,7 @@ func initDefaultConfig() {
 	DatabasePath.setDefault(ResolvePath("vikunja.db"))
 	DatabaseMaxOpenConnections.setDefault(100)
 	DatabaseMaxIdleConnections.setDefault(50)
-	DatabaseMaxConnectionLifetime.setDefault(10000)
+	DatabaseMaxConnectionLifetime.setDefault(1800000)
 	DatabaseSslMode.setDefault("disable")
 	DatabaseSslCert.setDefault("")
 	DatabaseSslKey.setDefault("")
@@ -435,13 +461,14 @@ func initDefaultConfig() {
 	LogLevel.setDefault("INFO")
 	LogFormat.setDefault("text")
 	LogDatabase.setDefault("off")
-	LogDatabaseLevel.setDefault("WARNING")
+	LogDatabaseLevel.setDefault("")
 	LogHTTP.setDefault("stdout")
+	LogHTTPLevel.setDefault("")
 	LogPath.setDefault(ResolvePath("logs"))
 	LogEvents.setDefault("off")
-	LogEventsLevel.setDefault("INFO")
+	LogEventsLevel.setDefault("")
 	LogMail.setDefault("off")
-	LogMailLevel.setDefault("INFO")
+	LogMailLevel.setDefault("")
 	// Rate Limit
 	RateLimitEnabled.setDefault(false)
 	RateLimitKind.setDefault("user")
@@ -449,6 +476,8 @@ func initDefaultConfig() {
 	RateLimitPeriod.setDefault(60)
 	RateLimitStore.setDefault("memory")
 	RateLimitNoAuthRoutesLimit.setDefault(10)
+	RateLimitTokenRefreshLimit.setDefault(60)
+	RateLimitBasicAuthLimit.setDefault(10)
 	// Files
 	FilesBasePath.setDefault("files")
 	FilesMaxSize.setDefault("20MB")
@@ -470,6 +499,11 @@ func initDefaultConfig() {
 	MigrationTodoistEnable.setDefault(false)
 	MigrationTrelloEnable.setDefault(false)
 	MigrationMicrosoftTodoEnable.setDefault(false)
+	MigrationClaimTimeout.setDefault("5m")
+	MigrationMaxCSVRows.setDefault(100000)
+	MigrationVikunjaFileMaxSize.setDefault("256MB")
+	MigrationVikunjaFileMaxFiles.setDefault(10000)
+	MigrationVikunjaFileMaxUserStorage.setDefault("1GB")
 	// Avatar
 	AvatarGravaterExpiration.setDefault(3600)
 	AvatarGravatarBaseURL.setDefault("https://www.gravatar.com")
@@ -481,6 +515,7 @@ func initDefaultConfig() {
 	KeyvalueType.setDefault("memory")
 	// Metrics
 	MetricsEnabled.setDefault(false)
+	MetricsPprof.setDefault(false)
 	// Settings
 	DefaultSettingsAvatarProvider.setDefault("initials")
 	DefaultSettingsOverdueTaskRemindersEnabled.setDefault(true)
@@ -625,6 +660,44 @@ func setConfigFromEnv() error {
 	return viper.MergeConfigMap(configMap)
 }
 
+// configFileOverride pins the config file, bypassing the search path. Set via
+// the --config flag.
+var configFileOverride string
+
+// SetConfigFile pins the config file InitConfig will load. Must be called before
+// InitConfig.
+func SetConfigFile(path string) {
+	configFileOverride = path
+}
+
+// anchorRootpathToConfigFile resolves a relative rootpath against a pinned
+// config file's directory, so it belongs to the install and not the caller's cwd.
+func anchorRootpathToConfigFile() {
+	if configFileOverride == "" {
+		return
+	}
+
+	configDir, err := filepath.Abs(filepath.Dir(viper.ConfigFileUsed()))
+	if err != nil {
+		return
+	}
+
+	if !viper.InConfig(string(ServiceRootpath)) {
+		ServiceRootpath.setDefault(configDir)
+	}
+
+	// An explicitly set value outranks a default, so rewrite at override level.
+	if rootpath := ServiceRootpath.GetString(); !filepath.IsAbs(rootpath) {
+		ServiceRootpath.Set(filepath.Join(configDir, rootpath))
+	}
+
+	// The default baked in initDefaultConfig() points at the caller's cwd, which
+	// would split the database off from the rest of the pinned install.
+	if !viper.InConfig(string(DatabasePath)) {
+		DatabasePath.setDefault(ResolvePath("vikunja.db"))
+	}
+}
+
 // InitConfig initializes the config, sets defaults etc.
 func InitConfig() {
 
@@ -639,20 +712,34 @@ func InitConfig() {
 	log.ConfigureStandardLogger(LogEnabled.GetBool(), LogStandard.GetString(), LogPath.GetString(), LogLevel.GetString(), LogFormat.GetString())
 
 	// Load the config file
-	viper.AddConfigPath(ServiceRootpath.GetString())
-	viper.AddConfigPath("/etc/vikunja/")
-
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Debugf("No home directory found, not using config from ~/.config/vikunja/. Error was: %s\n", err.Error())
+	if configFileOverride != "" {
+		viper.SetConfigFile(configFileOverride)
 	} else {
-		viper.AddConfigPath(path.Join(homeDir, ".config", "vikunja"))
+		viper.AddConfigPath(ServiceRootpath.GetString())
+		viper.AddConfigPath("/etc/vikunja/")
+
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			log.Debugf("No home directory found, not using config from ~/.config/vikunja/. Error was: %s\n", err.Error())
+		} else {
+			viper.AddConfigPath(path.Join(homeDir, ".config", "vikunja"))
+		}
+
+		viper.AddConfigPath(".")
+		// Must not run in the override branch: SetConfigName resets the
+		// explicitly set config file in viper.
+		viper.SetConfigName("config")
 	}
 
-	viper.AddConfigPath(".")
-	viper.SetConfigName("config")
+	err := viper.ReadInConfig()
 
-	err = viper.ReadInConfig()
+	// An explicitly requested config file that can't be read is fatal — silently
+	// falling back to defaults is how people end up debugging the wrong config.
+	if configFileOverride != "" && err != nil {
+		log.Fatalf("Could not read config file %s: %s", configFileOverride, err.Error())
+	}
+
+	anchorRootpathToConfigFile()
 
 	if viper.ConfigFileUsed() != "" {
 		log.Infof("Using config file: %s", viper.ConfigFileUsed())
@@ -686,6 +773,8 @@ func InitConfig() {
 	}
 
 	generateServiceSecretIfEmpty()
+
+	applyDefaultLogLevels()
 
 	if _, err := url.ParseRequestURI(AvatarGravatarBaseURL.GetString()); err != nil {
 		log.Fatalf("Could not parse gravatarbaseurl: %s", err)
