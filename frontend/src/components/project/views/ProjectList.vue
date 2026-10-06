@@ -22,7 +22,7 @@
 
 		<template #default>
 			<div
-				:class="{ 'is-loading': loading }"
+				:class="{ 'is-loading': showLoading }"
 				class="loader-container is-max-width-desktop list-view"
 			>
 				<Card
@@ -40,7 +40,7 @@
 					<Nothing v-if="ctaVisible && tasks.length === 0 && !loading">
 						{{ $t('project.list.empty') }}
 						<ButtonLink
-							v-if="project?.id > 0 && canWrite"
+							v-if="(project?.id ?? 0) > 0 && canWrite"
 							@click="focusNewTaskInput()"
 						>
 							{{ $t('project.list.newTaskCta') }}
@@ -102,7 +102,7 @@
 <script setup lang="ts">
 import {useUpdateTaskPositionMutation} from '@/client/queries/taskMutations'
 import {ref, computed, nextTick, onMounted, onBeforeUnmount, watch, toRef} from 'vue'
-import draggable from 'zhyswan-vuedraggable'
+import {draggableFor} from '@/components/base/Draggable'
 
 import ProjectWrapper from '@/components/project/ProjectWrapper.vue'
 import ButtonLink from '@/components/misc/ButtonLink.vue'
@@ -124,6 +124,7 @@ import {isSavedFilterProject} from '@/client/queries/projects'
 
 import {useBaseStore} from '@/stores/base'
 import {useTaskDragState} from '@/composables/useTaskDragState'
+import {useDelayedLoading} from '@/composables/useDelayedLoading'
 
 
 const props = defineProps<{
@@ -131,6 +132,8 @@ const props = defineProps<{
 	projectId: number,
 	viewId: number,
 }>()
+
+const draggable = draggableFor<TaskResponse>()
 
 const projectId = toRef(props, 'projectId')
 
@@ -156,6 +159,7 @@ const {
 		? ['comment_count', 'is_unread']
 		: ['subtasks', 'comment_count', 'is_unread'],
 )
+const showLoading = useDelayedLoading(loading)
 
 const positionMutation = useUpdateTaskPositionMutation()
 

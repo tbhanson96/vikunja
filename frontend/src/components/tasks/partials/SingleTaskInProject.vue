@@ -85,7 +85,7 @@
 				/>
 
 				<Popup
-					v-if="+new Date(task.due_date) > 0"
+					v-if="task.due_date && +new Date(task.due_date) > 0"
 					placement="bottom-start"
 					:anchor="dueDateTriggerEl"
 					sheet-on-mobile
@@ -236,6 +236,7 @@ import {playPopSound} from '@/helpers/playPop'
 import {isEditorContentEmpty} from '@/helpers/editorContentEmpty'
 import {TASK_REPEAT_MODES} from '@/types/IRepeatMode'
 import {useGlobalNow} from '@/composables/useGlobalNow'
+import {useDelayedLoading} from '@/composables/useDelayedLoading'
 
 const props = withDefaults(defineProps<{
 	theTask: ITask,
@@ -275,7 +276,7 @@ const isRepeating = computed(() => (task.value.repeat_after ?? 0) > 0
 const projectList = useProjects()
 const updateTask = useUpdateTaskMutation(true)
 const favoriteTask = useFavoriteTaskMutation()
-const isLoading = computed(() => updateTask.isPending.value || favoriteTask.isPending.value)
+const isLoading = useDelayedLoading(() => updateTask.isPending.value || favoriteTask.isPending.value)
 
 const project = computed(() => projectList.projects[task.value.project_id ?? 0])
 const projectColor = computed(() => project.value?.hex_color ?? '')
@@ -376,10 +377,10 @@ async function toggleFavorite() {
 const taskRoot = ref<HTMLElement | null>(null)
 const dueDateTrigger = ref<InstanceType<typeof BaseButton> | null>(null)
 const dueDateTriggerEl = computed<HTMLElement | null>(() => dueDateTrigger.value?.$el ?? null)
-const taskLinkRef = ref<HTMLElement | null>(null)
+const taskLinkRef = ref<InstanceType<typeof BaseButton> | null>(null)
 
 function hasTextSelected() {
-	const isTextSelected = window.getSelection().toString()
+	const isTextSelected = window.getSelection()?.toString()
 	return !(typeof isTextSelected === 'undefined' || isTextSelected === '' || isTextSelected === '\n')
 }
 

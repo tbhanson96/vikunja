@@ -20,10 +20,10 @@
 		<template #default>
 			<div class="kanban-view">
 				<div
-					:class="{ 'is-loading': initialLoading }"
+					:class="{ 'is-loading': showInitialLoading }"
 					class="kanban kanban-bucket-container loader-container"
 				>
-					<draggable
+					<BucketDraggable
 						v-bind="DRAG_OPTIONS"
 						:model-value="buckets"
 						group="buckets"
@@ -149,7 +149,7 @@
 									</Dropdown>
 								</div>
 
-								<draggable
+								<TaskDraggable
 									v-bind="DRAG_OPTIONS"
 									:handle="taskDragHandle"
 									:delay="isTouchDevice ? 300 : 1000"
@@ -175,7 +175,7 @@
 											>
 												<div
 													class="control"
-													:class="{'is-loading': initialLoading || taskLoading}"
+													:class="{'is-loading': showTaskLoading}"
 												>
 													<input
 														v-model="newTaskText"
@@ -234,10 +234,10 @@
 											/>
 										</li>
 									</template>
-								</draggable>
+								</TaskDraggable>
 							</li>
 						</template>
-					</draggable>
+					</BucketDraggable>
 
 					<div
 						v-if="canWrite && !initialLoading && buckets.length > 0"
@@ -247,8 +247,8 @@
 							v-if="showNewBucketInput"
 							v-model="newBucketTitle"
 							v-focus.always
-							:class="{'is-loading': initialLoading}"
-							:disabled="initialLoading || undefined"
+							:class="{'is-loading': showInitialLoading}"
+							:disabled="showInitialLoading || undefined"
 							class="input"
 							:placeholder="$t('project.kanban.addBucketPlaceholder')"
 							type="text"
@@ -306,11 +306,13 @@ import {useQuery, useQueryClient} from '@tanstack/vue-query'
 import {useRouter} from 'vue-router'
 import {useRouteQuery} from '@vueuse/router'
 import {useI18n} from 'vue-i18n'
-import draggable from 'zhyswan-vuedraggable'
+import {draggableFor} from '@/components/base/Draggable'
+import type {SortableEvent} from 'sortablejs'
 
 import {PERMISSIONS as Permissions} from '@/constants/permissions'
 
 import {useQuickAddTask} from '@/composables/useQuickAddTask'
+import {useDelayedLoading} from '@/composables/useDelayedLoading'
 import {useTaskDragState} from '@/composables/useTaskDragState'
 import {useAuthStore} from '@/stores/auth'
 
@@ -340,6 +342,8 @@ const props = defineProps<{
 	projectId: number,
 	viewId: number,
 }>()
+const BucketDraggable = draggableFor<BucketResponse>()
+const TaskDraggable = draggableFor<TaskResponse>()
 
 const projectId = toRef(props, 'projectId')
 
@@ -363,7 +367,7 @@ const {createNewTask, isLoading: quickAddLoading} = useQuickAddTask()
 const {setDraggedTask} = useTaskDragState()
 const authStore = useAuthStore()
 
-const alwaysShowBucketTaskCount = computed(() => authStore.settings.frontendSettings.alwaysShowBucketTaskCount)
+const alwaysShowBucketTaskCount = computed(() => authStore.settings.frontend_settings.always_show_bucket_task_count)
 const {handleTaskDropToProject} = useTaskDragToProject()
 const positionMutation = useUpdateTaskPositionMutation()
 const moveMutation = useMoveTaskMutation()
@@ -509,6 +513,8 @@ const initialLoading = board.isLoading
 const projectIdWithFallback = computed<number>(() => project.value?.id || projectId.value)
 
 const taskLoading = computed(() => quickAddLoading.value || positionMutation.isPending.value)
+const showInitialLoading = useDelayedLoading(initialLoading)
+const showTaskLoading = useDelayedLoading(() => initialLoading.value || taskLoading.value)
 
 watch(
 	projectId,
@@ -555,7 +561,7 @@ function updateTasks(bucketId: number, tasks: BucketResponse['tasks']) {
 		: bucket)
 }
 
-async function updateTaskPosition(e) {
+async function updateTaskPosition(e: SortableEvent & {originalEvent?: MouseEvent}) {
 	const project = projectId.value
 	const view = props.viewId
 	drag.value = false
@@ -755,7 +761,7 @@ async function saveBucketLimit(bucketId: number, limit: number) {
 	}, saveBucketLimitMutation)
 }
 
-const setBucketLimitCancel = ref<number | null>(null)
+const setBucketLimitCancel = ref<ReturnType<typeof setTimeout> | null>(null)
 
 async function setBucketLimit(bucketId: number, now: boolean = false) {
 	const limit = parseInt(bucketLimitInputRef.value?.value || '')
@@ -787,9 +793,9 @@ function dragstart(bucket: BucketResponse) {
 	sourceBucket.value = bucket.id
 }
 
-function handleTaskDragStart(e) {
-	const taskId = parseInt(e.item.dataset.taskId, 10)
-	const bucketIndex = parseInt(e.from.dataset.bucketIndex, 10)
+function handleTaskDragStart(e: SortableEvent) {
+	const taskId = Number(e.item.dataset.taskId)
+	const bucketIndex = Number(e.from.dataset.bucketIndex)
 	const bucket = buckets.value[bucketIndex]
 	const task = bucket?.tasks.find(t => t.id === taskId)
 

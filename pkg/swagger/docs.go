@@ -4106,7 +4106,7 @@ const docTemplate = `{
                         "JWTKeyAuth": []
                     }
                 ],
-                "description": "Share a project via link. The user needs to have write-access to the project to be able do this.",
+                "description": "Share a project via link. The user needs to be admin of the project to be able do this.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4236,7 +4236,7 @@ const docTemplate = `{
                         "JWTKeyAuth": []
                     }
                 ],
-                "description": "Remove a link share. The user needs to have write-access to the project to be able do this.",
+                "description": "Remove a link share. The user needs to be admin of the project to be able do this.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8699,9 +8699,9 @@ const docTemplate = `{
                         }
                     },
                     "401": {
-                        "description": "Invalid or expired refresh token.",
+                        "description": "Invalid, expired or already-used refresh token, or no refresh token cookie sent (codes 16002-16005).",
                         "schema": {
-                            "$ref": "#/definitions/models.Message"
+                            "$ref": "#/definitions/web.HTTPError"
                         }
                     }
                 }
@@ -9276,23 +9276,6 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
-        },
-        "license.Feature": {
-            "type": "integer",
-            "enum": [
-                0,
-                1,
-                2,
-                3,
-                4
-            ],
-            "x-enum-varnames": [
-                "FeatureUnknown",
-                "FeatureAdminPanel",
-                "FeatureTimeTracking",
-                "FeatureAuditLogs",
-                "FeatureUserInvites"
-            ]
         },
         "license.Info": {
             "type": "object",
@@ -11180,7 +11163,7 @@ const docTemplate = `{
                 "enabled_pro_features": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/license.Feature"
+                        "type": "string"
                     }
                 },
                 "frontend_url": {

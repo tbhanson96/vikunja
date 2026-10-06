@@ -2,6 +2,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
 
 import {client} from './generated/client.gen'
 import {configureApiClient} from './http'
+import {InvalidApiUrlProvidedError} from '@/helpers/apiUrl'
 
 const auth = vi.hoisted(() => ({
 	token: null as string | null,
@@ -25,6 +26,12 @@ vi.mock('@/helpers/auth', () => ({
 const problem = (code: number, detail = 'request failed') => new Response(JSON.stringify({code, detail}), {
 	status: 401,
 	headers: {'Content-Type': 'application/problem+json'},
+})
+
+// Echo rejects some /api/v2 requests before Huma and answers with a v1-shaped body.
+const echoError = (status: number, body: {code?: number, message: string}) => new Response(JSON.stringify(body), {
+	status,
+	headers: {'Content-Type': 'application/json'},
 })
 
 const ok = () => new Response(JSON.stringify({ok: true}), {
@@ -107,7 +114,7 @@ describe('configureApiClient', () => {
 	let responses: Response[]
 
 	beforeEach(() => {
-		window.API_URL = 'https://api.example.com/root/api/v1'
+		window.API_URL = 'https://api.example.com/root'
 		auth.token = null
 		auth.type = null
 		auth.id = 1
@@ -134,8 +141,8 @@ describe('configureApiClient', () => {
 		expect(requests[0].credentials).toBe('include')
 	})
 
-	it('supports a root-relative API base', async () => {
-		window.API_URL = '/api/v1'
+	it('supports the same-origin default', async () => {
+		window.API_URL = ''
 		configureApiClient()
 
 		await client.get({url: '/probe'})
@@ -177,7 +184,7 @@ describe('configureApiClient', () => {
 
 		const request = client.get({url: '/probe'})
 		await vi.waitFor(() => expect(requests).toHaveLength(1))
-		window.API_URL = 'https://other.example/api/v1'
+		window.API_URL = 'https://other.example'
 		configureApiClient()
 		response.resolve(ok())
 
@@ -185,7 +192,7 @@ describe('configureApiClient', () => {
 	})
 
 	it('rejects a request built for an outdated configured API before sending', async () => {
-		window.API_URL = 'https://other.example/api/v1'
+		window.API_URL = 'https://other.example'
 
 		await expect(client.get({url: '/probe'})).rejects.toMatchObject({name: 'AbortError'})
 
@@ -193,36 +200,36 @@ describe('configureApiClient', () => {
 	})
 
 	it('rejects an outdated nested API base before sending', async () => {
-		window.API_URL = 'https://api.example.com/root/api/v2/tenant-a/api/v1'
+		window.API_URL = 'https://api.example.com/root/tenant-a'
 		configureApiClient()
-		window.API_URL = 'https://api.example.com/root/api/v1'
+		window.API_URL = 'https://api.example.com/root'
 
 		await expect(client.get({url: '/probe'})).rejects.toMatchObject({name: 'AbortError'})
 
 		expect(requests).toHaveLength(0)
 	})
 
-	it('rejects an outdated API base with an extra trailing slash', async () => {
-		window.API_URL = 'https://api.example.com/root/api/v2//'
+	it('treats an extra trailing slash as the same API base', async () => {
+		window.API_URL = 'https://api.example.com/root//'
 		configureApiClient()
 		window.API_URL = 'https://api.example.com/root/api/v1'
 
-		await expect(client.get({url: '/probe'})).rejects.toMatchObject({name: 'AbortError'})
+		await client.get({url: '/probe'})
 
-		expect(requests).toHaveLength(0)
+		expect(requests[0].url).toBe('https://api.example.com/root/api/v2/probe')
 	})
 
-	it('rejects a missing API base before sending', async () => {
+	it('refuses to configure a missing API base and sends nothing', async () => {
 		window.API_URL = undefined as unknown as string
-		configureApiClient()
 
-		await expect(client.get({url: '/probe'})).rejects.toMatchObject({name: 'AbortError'})
+		expect(() => configureApiClient()).toThrow(InvalidApiUrlProvidedError)
 
+		await expect(client.get({url: '/probe'})).rejects.toBeInstanceOf(InvalidApiUrlProvidedError)
 		expect(requests).toHaveLength(0)
 	})
 
 	it('rejects a root-relative API base that canonicalizes to another origin', async () => {
-		window.API_URL = '/\\evil.example/api/v1'
+		window.API_URL = '/\\evil.example'
 		configureApiClient()
 		auth.token = 'current-token'
 
@@ -232,7 +239,7 @@ describe('configureApiClient', () => {
 	})
 
 	it('rejects a whitespace-obscured cross-origin API base', async () => {
-		window.API_URL = '/\t/evil.example/api/v1'
+		window.API_URL = '/\t/evil.example'
 		configureApiClient()
 		auth.token = 'current-token'
 
@@ -567,5 +574,64 @@ describe('configureApiClient', () => {
 
 		expect(auth.refreshToken).toHaveBeenCalledOnce()
 		expect(requests).toHaveLength(2)
+	})
+
+	it('stamps the response status onto an Echo error body', async () => {
+		responses = [echoError(429, {message: 'Too Many Requests'})]
+
+		await expect(client.get({url: '/probe'})).rejects.toEqual({
+			message: 'Too Many Requests',
+			detail: 'Too Many Requests',
+			status: 429,
+		})
+	})
+
+	it('keeps the Echo error code while stamping the status', async () => {
+		responses = [echoError(401, {
+			code: 11,
+			message: 'missing, malformed, expired or otherwise invalid token provided',
+		})]
+
+		await expect(client.get({url: '/probe'})).rejects.toEqual({
+			code: 11,
+			message: 'missing, malformed, expired or otherwise invalid token provided',
+			detail: 'missing, malformed, expired or otherwise invalid token provided',
+			status: 401,
+		})
+	})
+
+	it('leaves a problem body that already carries a status untouched', async () => {
+		responses = [new Response(JSON.stringify({
+			status: 403,
+			code: 4004,
+			detail: 'forbidden',
+		}), {
+			status: 403,
+			headers: {'Content-Type': 'application/problem+json'},
+		})]
+
+		await expect(client.get({url: '/probe'})).rejects.toEqual({
+			status: 403,
+			code: 4004,
+			detail: 'forbidden',
+		})
+	})
+
+	it('leaves a non-object error body untouched', async () => {
+		responses = [new Response('<html>gateway down</html>', {
+			status: 502,
+			headers: {'Content-Type': 'text/html'},
+		})]
+
+		await expect(client.get({url: '/probe'})).rejects.toBe('<html>gateway down</html>')
+	})
+
+	it('leaves a transport failure untouched', async () => {
+		const failure = new TypeError('Failed to fetch')
+		vi.stubGlobal('fetch', vi.fn(async () => {
+			throw failure
+		}))
+
+		await expect(client.get({url: '/probe'})).rejects.toBe(failure)
 	})
 })

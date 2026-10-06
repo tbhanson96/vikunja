@@ -3,7 +3,7 @@ import type {ReactionInput, ReactionUsers} from '@/client/queries/reactions'
 import {VuemojiPicker} from 'vuemoji-picker'
 import {useSetReactionMutation} from '@/client/queries/reactions'
 import BaseButton from '@/components/base/BaseButton.vue'
-import {getDisplayName} from '@/models/user'
+import {getDisplayName} from '@/helpers/user'
 import {useI18n} from 'vue-i18n'
 import {nextTick, onBeforeUnmount, onMounted, ref} from 'vue'
 import CustomTransition from '@/components/misc/CustomTransition.vue'
@@ -108,7 +108,7 @@ function hideEmojiPicker(e: MouseEvent) {
 onMounted(() => document.addEventListener('click', hideEmojiPicker))
 onBeforeUnmount(() => document.removeEventListener('click', hideEmojiPicker))
 
-const emojiPickerButtonRef = ref<HTMLElement | null>(null)
+const emojiPickerButtonRef = ref<InstanceType<typeof BaseButton> | null>(null)
 const reactionContainerRef = ref<HTMLElement | null>(null)
 const emojiPickerPosition = ref()
 

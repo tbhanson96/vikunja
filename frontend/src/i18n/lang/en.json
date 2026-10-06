@@ -52,6 +52,7 @@
     "loading": "Vikunja is loading…",
     "errorOccured": "An error occurred:",
     "checkApiUrl": "Please check if the api url is correct.",
+    "rateLimited": "The server received too many requests. Please wait a moment and reload the page.",
     "noApiUrlConfigured": "No API url was configured. Please set one below:"
   },
   "offline": {
@@ -116,7 +117,9 @@
         "description": "Bot users are API-only users you own. They can be added to projects, assigned tasks, and authenticated with API tokens. They cannot log in interactively.",
         "namePlaceholder": "My Assistant",
         "create": "Create bot",
+        "createSuccess": "The bot \"{username}\" was created.",
         "enable": "Enable",
+        "tokensInactive": "API tokens of a disabled bot are rejected. Enable the bot to create or use tokens.",
         "badge": "Bot",
         "delete": {
           "header": "Delete this bot user",
@@ -224,11 +227,13 @@
       "caldav": {
         "title": "CalDAV",
         "howTo": "You can connect Vikunja to CalDAV clients to view and manage all your tasks from different clients. Enter this URL into your client:",
+        "urlLabel": "CalDAV URL",
         "more": "More information about CalDAV in Vikunja",
         "tokens": "CalDAV Tokens",
         "tokensHowTo": "For CalDAV authentication you can use either your normal account password or a dedicated CalDAV token.",
         "createToken": "Create a CalDAV token",
         "tokenCreated": "Here is your new token: {token}",
+        "deleteSuccess": "The CalDAV token was deleted successfully.",
         "wontSeeItAgain": "Write it down or save it securely — you will not be able to see it again.",
         "mustUseToken": "You need to create a CalDAV token to use CalDAV with any third-party client. Enter the token in the password field of your client.",
         "usernameIs": "Your username for CalDAV is: {0}",
@@ -502,13 +507,27 @@
         "you": "You",
         "notShared": "Not shared with any {type} yet.",
         "remove": "Remove this {type}",
+        "sharable": "project",
         "removeHeader": "Remove a {type} from the {sharable}",
         "removeText": "Are you sure you want to remove this {sharable} from the {type}? This cannot be undone!",
+        "removeCleanupText": "Anyone who loses access to this project, or the projects under it, through this will also lose:",
         "removeSuccess": "The {sharable} was successfully removed from the {type}.",
         "addedSuccess": "The {type} was successfully added.",
         "updatedSuccess": "The {type} was successfully added.",
         "search": "Search for a {type} to share this project with",
         "permissionFor": "Permission for {sharable}"
+      },
+      "accessCleanup": {
+        "others": {
+          "assignments": "their task assignments",
+          "subscriptions": "their subscriptions to tasks and projects",
+          "webhooks": "webhooks they created"
+        },
+        "self": {
+          "assignments": "your task assignments",
+          "subscriptions": "your subscriptions to tasks and projects",
+          "webhooks": "webhooks you created"
+        }
       },
       "permission": {
         "title": "Permission",
@@ -987,7 +1006,8 @@
       "createPlaceholder": "Create",
       "selectPlaceholder": "Click or press enter to select",
       "removeItem": "Remove this item",
-      "clear": "Clear selection"
+      "clear": "Clear selection",
+      "moreResultsHint": "Showing the first {shown} of {total} matches. Refine your search to find the rest."
     },
     "datepickerRange": {
       "to": "To",
@@ -1367,18 +1387,21 @@
         "header": "Delete the team",
         "text1": "Are you sure you want to delete this team and all of its members?",
         "text2": "All team members will lose access to projects shared with this team. This CANNOT BE UNDONE!",
+        "cleanupText": "On projects the team members lose access to, the following will also be deleted:",
         "success": "The team was successfully deleted."
       },
       "deleteUser": {
         "header": "Remove a user from the team",
         "text1": "Are you sure you want to remove this user from the team?",
         "text2": "They will lose access to all projects this team has access to. This CANNOT BE UNDONE!",
+        "cleanupText": "On projects this user loses access to, the following will also be deleted:",
         "success": "The user was successfully deleted from the team."
       },
       "leave": {
         "title": "Leave team",
         "text1": "Are you sure you want to leave this team?",
         "text2": "You will lose access to all projects this team has access to. If you change your mind you'll need a team admin to add you again.",
+        "cleanupText": "On projects you lose access to, the following will also be deleted:",
         "success": "You have successfully left the team."
       }
     },
@@ -1491,11 +1514,14 @@
     "title": "Notifications",
     "none": "You don't have any notifications. Have a nice day!",
     "explainer": "Notifications will appear here when actions, projects or tasks you subscribed to happen.",
+    "read": "Read",
+    "unread": "Unread",
     "markAllRead": "Mark all notifications as read",
     "markAllReadSuccess": "Successfully marked all notifications as read.",
     "subscribeFeed": "Subscribe to notifications via Atom feed",
     "clearAll": "Clear notifications",
-    "clearAllSuccess": "All notifications have been cleared."
+    "clearAllSuccess": "All notifications have been cleared.",
+    "loadMore": "Load older notifications"
   },
   "quickActions": {
     "title": "Search and quick actions",
@@ -1577,6 +1603,7 @@
     "3007": "A project with this identifier already exists.",
     "3008": "The project is archived and can therefore only be accessed read only. This is also true for all tasks associated with this project.",
     "3016": "The parent project is archived. Un-archive the parent project first.",
+    "3017": "The default project must be a project you can write to.",
     "4001": "The task title cannot be empty.",
     "4002": "The task does not exist.",
     "4003": "All bulk editing tasks must belong to the same project.",
@@ -1750,7 +1777,10 @@
       "reassignOwner": "Reassign owner",
       "reassignTitle": "Reassign {title}",
       "reassignedSuccess": "Project owner reassigned.",
-      "newOwnerLabel": "New owner"
+      "newOwnerLabel": "New owner",
+      "searchPlaceholder": "Search projects…",
+      "filterByOwner": "Filter by owner",
+      "hideDefaultProjects": "Hide default projects"
     },
     "inviteLinks": {
       "title": "Invite links",
@@ -1772,7 +1802,8 @@
       "deleteConfirm": "Delete “{name}”? People will no longer be able to register with this link. Existing accounts will stay active.",
       "deleted": "Invite link deleted.",
       "empty": "No invite links yet. Create a link to invite people to this instance.",
-      "futureExpiry": "Choose an expiry in the future."
+      "futureExpiry": "Choose an expiry in the future.",
+      "creatorDeleted": "Deleted user"
     }
   }
 }

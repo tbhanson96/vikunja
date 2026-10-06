@@ -25,7 +25,7 @@
 		/>
 		<ImportHint v-if="tasksLoaded" />
 		<div
-			v-if="authStore.settings.frontendSettings.showLastViewed !== false && projectHistory.length > 0"
+			v-if="authStore.settings.frontend_settings.show_last_viewed !== false && projectHistory.length > 0"
 			class="is-max-width-desktop has-text-start mbs-4"
 		>
 			<h2>{{ $t('home.lastViewed') }}</h2>
@@ -84,7 +84,7 @@ const projectHistory = computed(() => {
 
 const tasksLoaded = ref(false)
 
-const deletionScheduledAt = computed(() => parseDateOrNull(authStore.info?.deletionScheduledAt))
+const deletionScheduledAt = computed(() => parseDateOrNull(authStore.info?.deletion_scheduled_at))
 
 // Extract label IDs from query parameter
 const labelIds = computed(() => {
@@ -92,7 +92,7 @@ const labelIds = computed(() => {
 	if (!labelsParam) {
 		return undefined
 	}
-	return Array.isArray(labelsParam) ? labelsParam : [labelsParam]
+	return Array.isArray(labelsParam) ? labelsParam.filter((id): id is string => id !== null) : [labelsParam]
 })
 
 // This is to reload the tasks list after adding a new task through the global task add.

@@ -3,7 +3,7 @@
 		ref="taskViewContainer"
 		class="loader-container task-view-container"
 		:class="{
-			'is-loading': taskLoading || taskMutating || !visible,
+			'is-loading': taskBusy || !visible,
 			'is-modal': isModal,
 		}"
 	>
@@ -37,7 +37,7 @@
 					:key="p.id"
 				>
 					<a
-						v-if="router.options.history.state?.back?.includes('/projects/'+p.id+'/') || false"
+						v-if="typeof router.options.history.state.back === 'string' && router.options.history.state.back.includes('/projects/'+p.id+'/')"
 						v-shortcut="p.id === project?.id ? SHORTCUTS.taskDetail.openProject : ''"
 						@click="router.back()"
 					>
@@ -133,7 +133,7 @@
 										v-model="dueDateInput"
 										:choose-date-label="$t('task.detail.chooseDueDate')"
 										:title="$t('task.attributes.dueDate')"
-										:disabled="taskLoading || taskMutating || !canWrite"
+										:disabled="taskBusy || !canWrite"
 										@closeOnChange="saveTask()"
 									/>
 									<BaseButton
@@ -189,7 +189,7 @@
 										v-model="startDateInput"
 										:choose-date-label="$t('task.detail.chooseStartDate')"
 										:title="$t('task.attributes.startDate')"
-										:disabled="taskLoading || taskMutating || !canWrite"
+										:disabled="taskBusy || !canWrite"
 										@closeOnChange="saveTask()"
 									/>
 									<BaseButton
@@ -224,7 +224,7 @@
 										v-model="endDateInput"
 										:choose-date-label="$t('task.detail.chooseEndDate')"
 										:title="$t('task.attributes.endDate')"
-										:disabled="taskLoading || taskMutating || !canWrite"
+										:disabled="taskBusy || !canWrite"
 										@closeOnChange="saveTask()"
 									/>
 									<BaseButton
@@ -649,7 +649,7 @@
 
 <script lang="ts" setup>
 import {parseDateOrNull} from '@/helpers/parseDateOrNull'
-import {ref, reactive, computed, watch, nextTick, onMounted, useTemplateRef, type ComponentPublicInstance} from 'vue'
+import {ref, reactive, computed, watch, nextTick, onBeforeUnmount, onMounted, useTemplateRef, type ComponentPublicInstance} from 'vue'
 import {useRouter, useRoute, type RouteLocation, onBeforeRouteLeave} from 'vue-router'
 import {useI18n} from 'vue-i18n'
 import {unrefElement, useDebounceFn, useElementSize, useIntersectionObserver, useMutationObserver} from '@vueuse/core'
@@ -662,7 +662,7 @@ import {createTaskDraft, mergeTask} from '@/helpers/task'
 import type {Task as ITask} from '@/client/generated'
 import type {ProjectResponse} from '@/client/queries/projects'
 
-import {PRIORITIES, type Priority} from '@/constants/priorities'
+import {PRIORITIES} from '@/constants/priorities'
 import {PERMISSIONS} from '@/constants/permissions'
 import {PRO_FEATURE} from '@/constants/proFeatures'
 import {SHORTCUTS} from '@/constants/shortcuts'
@@ -695,6 +695,7 @@ import Reactions from '@/components/input/Reactions.vue'
 
 import {getProjectTitle} from '@/helpers/getProjectTitle'
 import {scrollIntoView} from '@/helpers/scrollIntoView'
+import {getScrollParent} from '@/helpers/getScrollParent'
 import {TASK_REPEAT_MODES} from '@/types/IRepeatMode'
 import {REMINDER_PERIOD_RELATIVE_TO_TYPES} from '@/types/IReminderPeriodRelativeTo'
 import {playPopSound} from '@/helpers/playPop'
@@ -714,6 +715,7 @@ import {useConfigStore} from '@/stores/config'
 
 import {useTitle} from '@/composables/useTitle'
 import {useTaskDetailShortcuts} from '@/composables/useTaskDetailShortcuts'
+import {useDelayedLoading} from '@/composables/useDelayedLoading'
 
 import {error, success} from '@/message'
 import type {Action as MessageAction} from '@/message'
@@ -761,7 +763,7 @@ const taskQuery = useTask(
 		...(timeTrackingEnabled.value ? ['time_entries_count' as const] : []),
 	],
 )
-const task = ref<ITask>(createTaskDraft())
+const task = ref(createTaskDraft())
 
 // Only fields edited here stay local; the rest follows the cache.
 function followServerFields(loaded: ITask) {
@@ -907,18 +909,12 @@ const bottomMarkerVisible = ref(true)
 const isScrollable = ref(false)
 
 function resolveScrollContainer() {
-	let el = taskViewContainer.value
-
-	while (el) {
-		const overflowY = getComputedStyle(el).overflowY
-		if (['auto', 'scroll', 'overlay'].includes(overflowY)) {
-			scrollContainer.value = el
-			return
-		}
-		el = el.parentElement
+	// Null after unmount; deferred callers must not fall back to `document` then.
+	if (!taskViewContainer.value) {
+		return
 	}
 
-	scrollContainer.value = (document.scrollingElement as HTMLElement | null) ?? document.documentElement
+	scrollContainer.value = getScrollParent(taskViewContainer.value)
 }
 
 function updateScrollable() {
@@ -966,6 +962,7 @@ useMutationObserver(
 	debouncedMutationHandler,
 	{subtree: true, childList: true},
 )
+onBeforeUnmount(() => debouncedMutationHandler.cancel())
 
 const {height: scrollContainerHeight} = useElementSize(scrollContainer)
 watch(scrollContainerHeight, () => updateScrollable())
@@ -976,7 +973,7 @@ onMounted(async () => {
 	updateScrollable()
 })
 
-const taskLoading = taskQuery.isFetching
+const taskBusy = useDelayedLoading(() => taskQuery.isFetching.value || taskMutating.value)
 
 
 type FieldType =
@@ -1223,7 +1220,7 @@ async function duplicateCurrentTask() {
 	}
 }
 
-async function setPriority(priority: Priority) {
+async function setPriority(priority: number) {
 	const newTask: ITask = {
 		...task.value,
 		priority,

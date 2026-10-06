@@ -1,6 +1,6 @@
 import {describe, it, expect, beforeEach, vi} from 'vitest'
 
-import {fetchAttachmentBlob, fetchAttachmentUrl, releaseAttachmentUrl} from './attachments'
+import {fetchAttachmentBlob, fetchAttachmentUrl, generateAttachmentUrl, releaseAttachmentUrl} from './attachments'
 import {queryClient} from '@/client/queryClient'
 import {attachmentKeys} from '@/client/queries/attachments'
 
@@ -9,7 +9,7 @@ const {getBlobUrl} = vi.hoisted(() => ({getBlobUrl: vi.fn()}))
 const requestContext = vi.hoisted(() => ({
 	identity: {id: 1, type: 1} as {id: number, type: number} | null,
 	sessionEpoch: 1,
-	apiV2BaseUrl: 'https://identity-a.example/api/v2/',
+	apiBaseUrl: 'https://identity-a.example/api/v2/',
 }))
 
 vi.mock('@/client/generated', () => ({taskAttachmentsDownload: getBlobUrl}))
@@ -23,9 +23,9 @@ vi.mock(import('@/helpers/auth'), async importOriginal => ({
 	getToken: () => null,
 	getTokenIdentity: () => requestContext.identity,
 }))
-vi.mock(import('@/helpers/fetcher'), async importOriginal => ({
+vi.mock(import('@/helpers/apiUrl'), async importOriginal => ({
 	...await importOriginal(),
-	getApiV2BaseUrl: () => requestContext.apiV2BaseUrl,
+	getApiBaseUrl: () => requestContext.apiBaseUrl,
 }))
 
 const attachment = {task_id: 5, id: 9}
@@ -35,7 +35,7 @@ beforeEach(() => {
 	vi.unstubAllGlobals()
 	requestContext.identity = {id: 1, type: 1}
 	requestContext.sessionEpoch = 1
-	requestContext.apiV2BaseUrl = 'https://identity-a.example/api/v2/'
+	requestContext.apiBaseUrl = 'https://identity-a.example/api/v2/'
 	URL.createObjectURL = vi.fn(blob => (blob as Blob & {testUrl?: string}).testUrl ?? 'blob:real-attachment')
 	queryClient.removeQueries({queryKey: attachmentKeys.blobs})
 	getBlobUrl.mockReset()
@@ -217,5 +217,12 @@ describe('releaseAttachmentUrl', () => {
 		releaseAttachmentUrl(undefined)
 
 		expect(window.URL.revokeObjectURL).not.toHaveBeenCalled()
+	})
+})
+
+describe('generateAttachmentUrl', () => {
+	it('points at the attachment under the configured API base', () => {
+		requestContext.apiBaseUrl = 'https://x/prefix/api/v2'
+		expect(generateAttachmentUrl(5, 9)).toBe('https://x/prefix/api/v2/tasks/5/attachments/9')
 	})
 })
