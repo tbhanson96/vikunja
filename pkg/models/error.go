@@ -836,6 +836,27 @@ func (err ErrBulkTasksNeedAtLeastOne) HTTPError() web.HTTPError {
 	return web.HTTPError{HTTPCode: http.StatusBadRequest, Code: ErrCodeBulkTasksNeedAtLeastOne, Message: "Need at least one tasks to do bulk editing."}
 }
 
+// ErrBulkTaskFieldsRequired represents an error where a bulk task update names no fields to update.
+type ErrBulkTaskFieldsRequired struct{}
+
+// IsErrBulkTaskFieldsRequired checks if an error is a ErrBulkTaskFieldsRequired.
+func IsErrBulkTaskFieldsRequired(err error) bool {
+	_, ok := err.(ErrBulkTaskFieldsRequired)
+	return ok
+}
+
+func (err ErrBulkTaskFieldsRequired) Error() string {
+	return "Need at least one field when bulk editing tasks"
+}
+
+// ErrCodeBulkTaskFieldsRequired holds the unique world-error code of this error
+const ErrCodeBulkTaskFieldsRequired = 4036
+
+// HTTPError holds the http error description
+func (err ErrBulkTaskFieldsRequired) HTTPError() web.HTTPError {
+	return web.HTTPError{HTTPCode: http.StatusBadRequest, Code: ErrCodeBulkTaskFieldsRequired, Message: "Need at least one field to do bulk editing."}
+}
+
 // ErrNoPermissionToSeeTask represents an error where a user does not have the permission to see a task
 type ErrNoPermissionToSeeTask struct {
 	TaskID int64
@@ -2368,6 +2389,36 @@ func (err *ErrInvalidAPITokenPermission) HTTPError() web.HTTPError {
 		Code:       ErrCodeInvalidAPITokenPermission,
 		Message:    fmt.Sprintf("The permission %s of group %s is invalid.", err.Permission, err.Group),
 		I18nParams: map[string]string{"permission": err.Permission, "group": err.Group},
+	}
+}
+
+// ErrAPITokenDoesNotExist represents an error where an api token does not exist
+type ErrAPITokenDoesNotExist struct {
+	TokenID int64
+}
+
+// IsErrAPITokenDoesNotExist checks if an error is ErrAPITokenDoesNotExist.
+func IsErrAPITokenDoesNotExist(err error) bool {
+	if _, ok := err.(ErrAPITokenDoesNotExist); ok {
+		return true
+	}
+	_, ok := err.(*ErrAPITokenDoesNotExist)
+	return ok
+}
+
+func (err ErrAPITokenDoesNotExist) Error() string {
+	return fmt.Sprintf("API token does not exist [TokenID: %v]", err.TokenID)
+}
+
+// ErrCodeAPITokenDoesNotExist holds the unique world-error code of this error
+const ErrCodeAPITokenDoesNotExist = 14017
+
+// HTTPError holds the http error description
+func (err ErrAPITokenDoesNotExist) HTTPError() web.HTTPError {
+	return web.HTTPError{
+		HTTPCode: http.StatusNotFound,
+		Code:     ErrCodeAPITokenDoesNotExist,
+		Message:  "This API token does not exist.",
 	}
 }
 

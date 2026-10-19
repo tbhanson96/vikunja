@@ -396,7 +396,7 @@ export type BulkTask = {
      */
     readonly $schema?: string;
     /**
-     * The names of the task fields to apply from values; only these fields are written, the rest of each task is left untouched.
+     * The names of the task fields to apply from values; only these fields are written, the rest of each task is left untouched. Besides the task columns, assignees, reminders and is_favorite may be named. At least one field is required.
      */
     fields?: Array<string> | null;
     /**
@@ -2180,6 +2180,10 @@ export type Task = {
      * The task's position, saved per view. Only non-zero when the task is fetched through a view endpoint; use the task-position endpoint to change it.
      */
     readonly position?: number;
+    /**
+     * The task's stored position in each view of its project. Only present in create and duplicate responses.
+     */
+    readonly positions?: Array<TaskPosition> | null;
     priority?: number;
     /**
      * The id of the project this task belongs to. On create it is taken from the URL; on update, setting it to a different project moves the task (requires write access to the target project).
@@ -2521,6 +2525,10 @@ export type TaskReadOneBody = {
      * The task's position, saved per view. Only non-zero when the task is fetched through a view endpoint; use the task-position endpoint to change it.
      */
     readonly position?: number;
+    /**
+     * The task's stored position in each view of its project. Only present in create and duplicate responses.
+     */
+    readonly positions?: Array<TaskPosition> | null;
     priority?: number;
     /**
      * The id of the project this task belongs to. On create it is taken from the URL; on update, setting it to a different project moves the task (requires write access to the target project).
@@ -3700,7 +3708,7 @@ export type BulkAssigneesWritable = {
 
 export type BulkTaskWritable = {
     /**
-     * The names of the task fields to apply from values; only these fields are written, the rest of each task is left untouched.
+     * The names of the task fields to apply from values; only these fields are written, the rest of each task is left untouched. Besides the task columns, assignees, reminders and is_favorite may be named. At least one field is required.
      */
     fields?: Array<string> | null;
     /**

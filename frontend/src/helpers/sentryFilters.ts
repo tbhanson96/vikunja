@@ -1,3 +1,4 @@
+import {ApiError} from '@/client/problem'
 import {SENSITIVE_QUERY_PARAMS} from '@/helpers/sensitiveQueryParams'
 
 // Failed requests are surfaced to the user through the UI already, and an
@@ -69,12 +70,17 @@ function isRequestError(e: unknown): boolean {
 		return true
 	}
 
+	// 5xx are server bugs we want to see.
+	if (e instanceof ApiError) {
+		return e.status < 500
+	}
+
 	return isApiErrorBody(e)
 }
 
-// API error bodies are thrown as parsed JSON, so they are always plain objects.
-// Requiring that keeps out DOMException and other Error subclasses, which also
-// carry a `code` and a `message`.
+// Problem bodies copied out of an ApiError, e.g. RefreshTokenError's cause.
+// Requiring a plain object keeps out DOMException and other Error subclasses,
+// which also carry a `code` and a `message`.
 function isApiErrorBody(e: unknown): boolean {
 	if (typeof e !== 'object' || e === null || Object.getPrototypeOf(e) !== Object.prototype) {
 		return false
@@ -188,6 +194,12 @@ export function isReportableResourceUrl(url: string, pageUrl: string): boolean {
 		return false
 	}
 
+	// API images arrive as blob: or data: urls, so a cross-origin one comes from
+	// user content, a custom logo or a browser extension, never from our bundle.
+	if (resource.origin !== page.origin) {
+		return false
+	}
+
 	// An empty, blank or fragment-only src resolves to the page itself, which is never a resource.
 	resource.hash = ''
 	page.hash = ''
@@ -209,18 +221,40 @@ export function stripNavigationFragment<T>(span: T): T {
 const SENSITIVE_PARAM_PATTERN = new RegExp(`((?:^|[?&#]|%3F|%26)(?:${SENSITIVE_QUERY_PARAMS.join('|')})(?:=|%3D))[^&#\\s"']*`, 'gi')
 
 export function redactSensitiveParams<T>(value: T): T {
+	return redact(value, new WeakMap())
+}
+
+// Events can hold cycles: console breadcrumbs keep the raw logged arguments
+// until Sentry normalizes the event, which happens after our event processor.
+function redact<T>(value: T, copies: WeakMap<object, unknown>): T {
 	if (typeof value === 'string') {
 		return value.replace(SENSITIVE_PARAM_PATTERN, '$1[Filtered]') as T
 	}
 
-	if (Array.isArray(value)) {
-		return value.map(redactSensitiveParams) as T
+	if (!value || typeof value !== 'object') {
+		return value
 	}
 
-	if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
-		return Object.fromEntries(
-			Object.entries(value).map(([key, v]) => [key, redactSensitiveParams(v)]),
-		) as T
+	if (copies.has(value)) {
+		return copies.get(value) as T
+	}
+
+	if (Array.isArray(value)) {
+		const copy: unknown[] = []
+		copies.set(value, copy)
+		for (const item of value) {
+			copy.push(redact(item, copies))
+		}
+		return copy as T
+	}
+
+	if (Object.getPrototypeOf(value) === Object.prototype) {
+		const copy: Record<string, unknown> = {}
+		copies.set(value, copy)
+		for (const [key, v] of Object.entries(value)) {
+			copy[key] = redact(v, copies)
+		}
+		return copy as T
 	}
 
 	return value

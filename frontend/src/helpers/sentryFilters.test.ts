@@ -1,5 +1,7 @@
 import {describe, it, expect} from 'vitest'
+import {reactive} from 'vue'
 
+import {ApiError} from '@/client/problem'
 import {isReportableResourceUrl, redactSensitiveParams, shouldDropEvent, stripNavigationFragment} from './sentryFilters'
 
 // Object.assign instead of `new Error(msg, {cause})`: the vitest tsconfig
@@ -272,6 +274,26 @@ describe('generated transport errors', () => {
 		})).toBe(true)
 	})
 
+	it('drops a 4xx ApiError', () => {
+		expect(shouldDropEvent(new ApiError({status: 404, detail: '404 page not found'}))).toBe(true)
+	})
+
+	it('drops a 4xx ApiError without a code', () => {
+		expect(shouldDropEvent(new ApiError({status: 403, detail: 'Forbidden'}))).toBe(true)
+	})
+
+	it('reports a 5xx ApiError', () => {
+		expect(shouldDropEvent(new ApiError({status: 502, detail: 'Bad Gateway'}))).toBe(false)
+	})
+
+	it('reports a 5xx ApiError with a code', () => {
+		expect(shouldDropEvent(new ApiError({status: 500, code: 1, detail: 'Internal'}))).toBe(false)
+	})
+
+	it('drops an error wrapping a 4xx ApiError as cause', () => {
+		expect(shouldDropEvent(errorWithCause('outer', new ApiError({status: 404, detail: 'Not found'})))).toBe(true)
+	})
+
 	it('reports 5xx v2 problems', () => {
 		expect(shouldDropEvent({status: 500, detail: 'Unavailable'})).toBe(false)
 	})
@@ -318,6 +340,29 @@ describe('redactSensitiveParams', () => {
 			count: 1,
 		})
 	})
+
+	// Console breadcrumbs carry the raw logged arguments until Sentry normalizes
+	// the event, which happens after our event processor.
+	it('handles a cyclic object', () => {
+		const route: Record<string, unknown> = {path: '/?userPasswordReset=abc123'}
+		route.children = [{parent: route}]
+
+		const redacted = redactSensitiveParams({breadcrumbs: [{data: {arguments: [route]}}]})
+		const copy = redacted.breadcrumbs[0].data.arguments[0]
+
+		expect(copy.path).toBe('/?userPasswordReset=[Filtered]')
+		expect((copy.children as {parent: unknown}[])[0].parent).toBe(copy)
+	})
+
+	it('handles a cyclic reactive object', () => {
+		const project = reactive<Record<string, unknown>>({title: '/?accountDeletionConfirm=abc123', childProjects: []})
+		;(project.childProjects as unknown[]).push({parentProject: project})
+
+		const redacted = redactSensitiveParams({extra: {project}})
+
+		expect(redacted.extra.project.title).toBe('/?accountDeletionConfirm=[Filtered]')
+		expect((redacted.extra.project.childProjects as {parentProject: unknown}[])[0].parentProject).toBe(redacted.extra.project)
+	})
 })
 
 describe('isReportableResourceUrl', () => {
@@ -325,10 +370,19 @@ describe('isReportableResourceUrl', () => {
 
 	it.each([
 		'https://app.vikunja.cloud/assets/logo.png',
-		'http://127.0.0.1:8080/assets/logo.png',
 		'https://app.vikunja.cloud/tasks/395132/cover.png',
 	])('reports %s, which the browser fetched over the network', url => {
 		expect(isReportableResourceUrl(url, page)).toBe(true)
+	})
+
+	it.each([
+		// FRONTEND-OSS-263: favicons a browser extension injected into /register
+		'https://news.search.yahoo.co.jp/favicon.ico',
+		'https://auctions.search.yahoo.co.jp/favicon.ico',
+		'http://app.vikunja.cloud/assets/logo.png',
+		'https://app.vikunja.cloud:8443/assets/logo.png',
+	])('skips %s, which is not served from our origin', url => {
+		expect(isReportableResourceUrl(url, page)).toBe(false)
 	})
 
 	it.each([
