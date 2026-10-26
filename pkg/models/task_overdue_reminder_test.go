@@ -21,7 +21,9 @@ import (
 	"time"
 
 	"code.vikunja.io/api/pkg/db"
+	"code.vikunja.io/api/pkg/events"
 	"code.vikunja.io/api/pkg/user"
+	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"xorm.io/builder"
@@ -479,5 +481,56 @@ func TestOverdueTaskNotificationsIncludeSubscribers(t *testing.T) {
 		}
 
 		assert.False(t, hasSubscriber, "subscriber without project access should not receive notification")
+	})
+}
+
+func TestOverdueEventsWithListeners(t *testing.T) {
+	t.Run("no webhook subscribed", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		single, batch, err := overdueEventsWithListeners(s)
+		require.NoError(t, err)
+		assert.False(t, single)
+		assert.False(t, batch)
+	})
+	t.Run("batch event subscribed", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		_, err := s.Insert(&Webhook{
+			TargetURL:   "https://example.com/overdue",
+			Events:      []string{"task.updated", (&TasksOverdueEvent{}).Name()},
+			UserID:      1,
+			CreatedByID: 1,
+		})
+		require.NoError(t, err)
+
+		single, batch, err := overdueEventsWithListeners(s)
+		require.NoError(t, err)
+		assert.False(t, single)
+		assert.True(t, batch)
+	})
+}
+
+type testOverdueListener struct{}
+
+func (*testOverdueListener) Handle(*message.Message) error { return nil }
+func (*testOverdueListener) Name() string                  { return "testOverdueListener" }
+
+func TestHasNonWebhookListener(t *testing.T) {
+	// Unique names: the listener registry is global and has no unregister.
+	t.Run("webhook listener only", func(t *testing.T) {
+		name := "test.overdue.webhook-only"
+		events.RegisterListener(name, &WebhookListener{EventName: name})
+		assert.False(t, hasNonWebhookListener(name))
+	})
+	t.Run("plugin listener", func(t *testing.T) {
+		name := "test.overdue.plugin"
+		events.RegisterListener(name, &WebhookListener{EventName: name})
+		events.RegisterListener(name, &testOverdueListener{})
+		assert.True(t, hasNonWebhookListener(name))
 	})
 }

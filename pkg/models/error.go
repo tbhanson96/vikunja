@@ -1081,6 +1081,62 @@ func (err ErrTaskAttachmentIsTooLarge) HTTPError() web.HTTPError {
 	}
 }
 
+// ErrTaskAttachmentNotPreviewable represents an error where a preview was requested for an attachment that has none.
+type ErrTaskAttachmentNotPreviewable struct {
+	Err error
+}
+
+// IsErrTaskAttachmentNotPreviewable checks if an error is ErrTaskAttachmentNotPreviewable.
+func IsErrTaskAttachmentNotPreviewable(err error) bool {
+	var notPreviewable ErrTaskAttachmentNotPreviewable
+	return errors.As(err, &notPreviewable)
+}
+
+func (err ErrTaskAttachmentNotPreviewable) Error() string {
+	return fmt.Sprintf("Task attachment is not previewable: %v", err.Err)
+}
+
+func (err ErrTaskAttachmentNotPreviewable) Unwrap() error {
+	return err.Err
+}
+
+// ErrCodeTaskAttachmentNotPreviewable holds the unique world-error code of this error
+const ErrCodeTaskAttachmentNotPreviewable = 4038
+
+// HTTPError holds the http error description
+func (err ErrTaskAttachmentNotPreviewable) HTTPError() web.HTTPError {
+	return web.HTTPError{
+		HTTPCode: http.StatusUnprocessableEntity,
+		Code:     ErrCodeTaskAttachmentNotPreviewable,
+		Message:  "This attachment has no preview.",
+	}
+}
+
+// ErrInvalidPreviewSize represents an error where a preview was requested in a size that does not exist.
+type ErrInvalidPreviewSize struct{}
+
+// IsErrInvalidPreviewSize checks if an error is ErrInvalidPreviewSize.
+func IsErrInvalidPreviewSize(err error) bool {
+	var invalid ErrInvalidPreviewSize
+	return errors.As(err, &invalid)
+}
+
+func (err ErrInvalidPreviewSize) Error() string {
+	return "Invalid task attachment preview size"
+}
+
+// ErrCodeInvalidPreviewSize holds the unique world-error code of this error
+const ErrCodeInvalidPreviewSize = 4039
+
+// HTTPError holds the http error description
+func (err ErrInvalidPreviewSize) HTTPError() web.HTTPError {
+	return web.HTTPError{
+		HTTPCode: http.StatusUnprocessableEntity,
+		Code:     ErrCodeInvalidPreviewSize,
+		Message:  "The preview size must be one of sm, md, lg or xl.",
+	}
+}
+
 // ErrInvalidSortParam represents an error where the provided sort param is invalid
 type ErrInvalidSortParam struct {
 	SortBy string
@@ -1268,8 +1324,17 @@ func (err ErrInvalidTaskFilterValue) HTTPError() web.HTTPError {
 	return web.HTTPError{
 		HTTPCode: http.StatusBadRequest,
 		Code:     ErrCodeInvalidTaskFilterValue,
-		Message:  fmt.Sprintf("The task filter value '%s' for field '%s' is invalid.", err.Value, err.Field),
+		Message:  fmt.Sprintf("The task filter value '%s' for field '%s' is invalid.", err.Value, err.Field) + wordConcatenatorHint(err.Value),
 	}
+}
+
+// The value regex runs up to the next & or |, so `a = 1 and b = 2` lands here as one value.
+func wordConcatenatorHint(value any) string {
+	padded := " " + strings.ToLower(fmt.Sprint(value)) + " "
+	if strings.Contains(padded, " and ") || strings.Contains(padded, " or ") {
+		return " Combine conditions with && and ||, not 'and' and 'or'."
+	}
+	return ""
 }
 
 // ErrAttachmentDoesNotBelongToTask represents an error where the provided task cover attachment does not belong to the same task
@@ -2101,6 +2166,30 @@ func (err ErrTaskAlreadyExistsInBucket) HTTPError() web.HTTPError {
 		HTTPCode: http.StatusBadRequest,
 		Code:     ErrCodeTaskAlreadyExistsInBucket,
 		Message:  "This task already exists in a bucket for this project view.",
+	}
+}
+
+type ErrTooManyBuckets struct {
+	ProjectViewID int64
+	Max           int
+}
+
+func IsErrTooManyBuckets(err error) bool {
+	_, ok := err.(ErrTooManyBuckets)
+	return ok
+}
+
+func (err ErrTooManyBuckets) Error() string {
+	return fmt.Sprintf("Project view has too many buckets [ProjectViewID: %d, Max: %d]", err.ProjectViewID, err.Max)
+}
+
+const ErrCodeTooManyBuckets = 10007
+
+func (err ErrTooManyBuckets) HTTPError() web.HTTPError {
+	return web.HTTPError{
+		HTTPCode: http.StatusPreconditionFailed,
+		Code:     ErrCodeTooManyBuckets,
+		Message:  fmt.Sprintf("A project view can have at most %d buckets.", err.Max),
 	}
 }
 
